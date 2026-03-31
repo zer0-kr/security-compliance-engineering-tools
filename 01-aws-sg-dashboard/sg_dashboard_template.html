@@ -939,6 +939,16 @@
                         shape: 'star', size: 16,
                         color: { background: '#AD1457', border: '#880E4F' }
                     });
+                case 'eks':
+                    return Object.assign(base, {
+                        shape: 'box', size: 18,
+                        color: { background: '#FF6F00', border: '#E65100' }
+                    });
+                case 'efs':
+                    return Object.assign(base, {
+                        shape: 'box', size: 18,
+                        color: { background: '#558B2F', border: '#33691E' }
+                    });
                 case 'sg':
                     if (n.is_vulnerable) {
                         return Object.assign(base, {

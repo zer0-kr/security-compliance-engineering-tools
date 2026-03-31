@@ -715,7 +715,8 @@ def _run_query_with_connection_fallback(query, auth_ok_profiles):
                     ['steampipe', 'query', query,
                      '--search-path-prefix', conn_name,
                      '--output', 'json'],
-                    capture_output=True, text=True, check=True
+                    capture_output=True, text=True, check=True,
+                    timeout=QUERY_TIMEOUT_SECONDS
                 )
                 data = json.loads(result.stdout)
                 all_rows.extend(data.get('rows', []))
@@ -1797,12 +1798,15 @@ def update_html_template(template_file, nodes, edges, sg_rules, vpc_info, accoun
         )
 
 
+    def _safe_json(obj):
+        return json.dumps(obj, indent=8, ensure_ascii=False).replace('</', '<\\/')
+
     data_section = f"""{START_MARKER}
-        const nodesData = {json.dumps(nodes, indent=8, ensure_ascii=False)};
-        const edgesData = {json.dumps(edges, indent=8, ensure_ascii=False)};
-        const sgRules = {json.dumps(sg_rules, indent=8, ensure_ascii=False)};
-        const vpcInfo = {json.dumps(vpc_info, indent=8, ensure_ascii=False)};
-        const accountInfo = {json.dumps(account_info, indent=8, ensure_ascii=False)};
+        const nodesData = {_safe_json(nodes)};
+        const edgesData = {_safe_json(edges)};
+        const sgRules = {_safe_json(sg_rules)};
+        const vpcInfo = {_safe_json(vpc_info)};
+        const accountInfo = {_safe_json(account_info)};
         {END_MARKER}"""
 
     return html_content[:start_idx] + data_section + html_content[end_idx:]
