@@ -1523,7 +1523,7 @@ def collect_multi_account_data(args=None):
     logger.info(f"   ⏱  Starting parallel queries...")
     parallel_start = time.time()
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as executor:
         futures = {
             executor.submit(get_ec2_instances, all_vpc_info): 'EC2',
             executor.submit(get_rds_instances, all_vpc_info): 'RDS',
