@@ -1,0 +1,1832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Group Review Dashboard</title>
+    <link href="https://unpkg.com/vis-network@9.1.9/styles/vis-network.min.css" rel="stylesheet"
+          integrity="sha384-dyJxWiQJAf9QvdWzvgaFgxG2+qGBlxRcGINxMWNJBYZ7731QjuquKfhX2OUkb22J" crossorigin="anonymous" />
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+            integrity="sha384-yxKDWWf0wwdUj/gPeuL11czrnKFQROnLgY8ll7En9NYoXibgg3C6NK/UDHNtUgWJ" crossorigin="anonymous"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+            integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous" defer></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #ffffff;
+            color: #1f2937;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #app {
+            display: grid;
+            grid-template-rows: 52px 1fr 44px;
+            grid-template-columns: 280px 1fr 0px;
+            grid-template-areas:
+                "stats   stats   stats"
+                "filter  graph   detail"
+                "legend  legend  legend";
+            height: 100vh;
+        }
+        #app.detail-open {
+            grid-template-columns: 280px 1fr 360px;
+        }
+
+        /* ===== STATS BAR ===== */
+        #stats-bar {
+            grid-area: stats;
+            background: #f5f7fa;
+            border-bottom: 1px solid #d1d5db;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 8px;
+        }
+        #stats-bar h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #374151;
+            white-space: nowrap;
+            margin-right: 16px;
+        }
+        .stat-card {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            background: #e8ecf1;
+            border-radius: 6px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .stat-card .stat-value {
+            font-weight: 700;
+            color: #0ea5e9;
+            font-size: 14px;
+        }
+        .stat-card .stat-label { color: #6b7280; }
+        .toolbar {
+            margin-left: auto;
+            display: flex;
+            gap: 6px;
+        }
+        .toolbar button {
+            padding: 5px 10px;
+            background: #e8ecf1;
+            color: #374151;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+        .toolbar button:hover { background: #dbeafe; color: #1f2937; }
+        .toolbar button.active { background: #0ea5e9; border-color: #0ea5e9; color: #ffffff; }
+
+        /* ===== FILTER PANEL ===== */
+        #filter-panel {
+            grid-area: filter;
+            background: #f5f7fa;
+            border-right: 1px solid #d1d5db;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        .filter-section {
+            margin-bottom: 14px;
+        }
+        .filter-section-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: #0ea5e9;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .filter-section-title .select-btns {
+            display: flex;
+            gap: 4px;
+        }
+        .filter-section-title .select-btns button {
+            font-size: 10px;
+            padding: 1px 6px;
+            background: transparent;
+            color: #6b7280;
+            border: 1px solid #d1d5db;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .filter-section-title .select-btns button:hover { color: #374151; border-color: #6b7280; }
+        .filter-list { display: flex; flex-direction: column; gap: 4px; }
+        .filter-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.15s;
+        }
+        .filter-item:hover { background: #e8ecf1; }
+        .filter-item input[type="checkbox"] {
+            accent-color: #0ea5e9;
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+        .color-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .filter-item label { cursor: pointer; flex: 1; line-height: 1.3; }
+        .search-box {
+            width: 100%;
+            padding: 7px 10px;
+            background: #ffffff;
+            border: 1px solid #d1d5db;
+            border-radius: 5px;
+            color: #1f2937;
+            font-size: 12px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .search-box:focus { border-color: #0ea5e9; }
+        .search-box::placeholder { color: #9ca3af; }
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 12px;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 36px;
+            height: 20px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background: #d1d5db;
+            border-radius: 20px;
+            transition: background 0.3s;
+        }
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            left: 2px;
+            bottom: 2px;
+            background: #ffffff;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        .toggle-switch input:checked + .toggle-slider { background: #0ea5e9; }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); background: #ffffff; }
+
+        /* ===== GRAPH CONTAINER ===== */
+        #graph-container {
+            grid-area: graph;
+            position: relative;
+            background: #ffffff;
+            min-height: 0;
+            overflow: hidden;
+        }
+        #network-canvas {
+            width: 100%;
+            height: 100%;
+        }
+        #empty-state {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #6b7280;
+            gap: 12px;
+        }
+        #empty-state .empty-icon { font-size: 48px; }
+        #empty-state .empty-text { font-size: 14px; }
+        #empty-state .empty-hint { font-size: 12px; color: #9ca3af; }
+        #stabilization-progress {
+            position: absolute;
+            inset: 0;
+            display: none;
+            z-index: 10;
+            background: rgba(255, 255, 255, 0.85);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        #stabilization-progress.active {
+            display: flex;
+        }
+        #stabilization-bar-container {
+            width: 280px;
+            height: 6px;
+            background: #e5e7eb;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        #stabilization-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #0ea5e9, #3b82f6);
+            transition: width 0.15s;
+            border-radius: 3px;
+        }
+        #stabilization-text {
+            font-size: 13px;
+            color: #6b7280;
+            font-weight: 500;
+        }
+
+        /* ===== DETAIL PANEL ===== */
+        #detail-panel {
+            grid-area: detail;
+            background: #f5f7fa;
+            border-left: 1px solid #d1d5db;
+            overflow-y: auto;
+            padding: 0;
+        }
+        .detail-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px;
+            border-bottom: 1px solid #d1d5db;
+            position: sticky;
+            top: 0;
+            background: #f5f7fa;
+            z-index: 5;
+        }
+        .detail-header h3 {
+            font-size: 14px;
+            font-weight: 600;
+            flex: 1;
+            word-break: break-all;
+        }
+        .close-btn {
+            background: none;
+            border: none;
+            color: #6b7280;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .close-btn:hover { color: #1f2937; }
+        .detail-meta {
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            border-bottom: 1px solid #d1d5db;
+        }
+        .meta-row {
+            font-size: 12px;
+            display: flex;
+            gap: 8px;
+        }
+        .meta-label {
+            color: #6b7280;
+            min-width: 50px;
+            flex-shrink: 0;
+        }
+        .badge {
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-success { background: #d1fae5; color: #059669; }
+        .badge-danger { background: #fee2e2; color: #dc2626; }
+        .badge-warning { background: #fef3c7; color: #d97706; }
+
+        /* Rule tabs */
+        .rule-tabs {
+            display: flex;
+            border-bottom: 1px solid #d1d5db;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 8px 12px;
+            background: transparent;
+            color: #6b7280;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover { color: #374151; }
+        .tab-btn.active { color: #0ea5e9; border-bottom-color: #0ea5e9; }
+        .rules-content { padding: 10px 14px; }
+        .rules-content.hidden { display: none; }
+        .rules-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+        .rules-table th {
+            text-align: left;
+            padding: 6px 6px;
+            color: #6b7280;
+            font-weight: 600;
+            border-bottom: 1px solid #d1d5db;
+            white-space: nowrap;
+        }
+        .rules-table td {
+            padding: 5px 6px;
+            border-bottom: 1px solid rgba(209,213,219,0.5);
+            vertical-align: top;
+            word-break: break-all;
+        }
+        .rule-open-access td { background: rgba(220,38,38,0.06); }
+        .rule-vulnerable td { background: rgba(220,38,38,0.12); }
+        .vuln-summary {
+            background: #FEF2F2;
+            border: 1px solid #FECACA;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 12px 0;
+        }
+        .vuln-header {
+            color: #991B1B;
+            font-weight: 700;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .vuln-item {
+            display: flex;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 13px;
+            align-items: center;
+        }
+        .vuln-port { font-weight: 600; color: #DC2626; min-width: 60px; }
+        .vuln-service { color: #6B7280; min-width: 90px; }
+        .vuln-source { color: #DC2626; }
+        .vuln-severity {
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .vuln-severity-critical { background: #FEE2E2; color: #991B1B; }
+        .vuln-severity-high { background: #FEF3C7; color: #92400E; }
+        .source-open { color: #dc2626; font-weight: 600; }
+        .source-sg {
+            color: #d97706;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .source-sg:hover { text-decoration: underline; }
+        .no-rules {
+            text-align: center;
+            padding: 20px;
+            color: #9ca3af;
+            font-size: 12px;
+        }
+
+        /* Connected SGs */
+        .section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            padding: 10px 14px 6px;
+        }
+        .sg-card {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .sg-card:hover { background: #e8ecf1; }
+        .sg-hex-mini {
+            width: 18px;
+            height: 16px;
+            background: #f1c40f;
+            clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+            flex-shrink: 0;
+        }
+        .sg-card-info { flex: 1; min-width: 0; }
+        .sg-card-name { font-size: 12px; font-weight: 500; }
+        .sg-card-id { font-size: 10px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .sg-arrow { color: #9ca3af; }
+
+        /* Attached Resources */
+        .res-card {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .res-card:hover { background: #e8ecf1; }
+        .res-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .res-card-info { flex: 1; min-width: 0; }
+        .res-card-name { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .res-card-meta { font-size: 10px; color: #6b7280; }
+
+        .detail-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #9ca3af;
+            font-size: 13px;
+            text-align: center;
+            padding: 20px;
+        }
+
+        /* ===== LEGEND BAR ===== */
+        #legend-bar {
+            grid-area: legend;
+            background: #f5f7fa;
+            border-top: 1px solid #d1d5db;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 16px;
+            overflow-x: auto;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+        .legend-shape {
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0;
+        }
+        .legend-shape.circle { border-radius: 50%; }
+        .legend-shape.database {
+            border-radius: 2px;
+            height: 16px;
+            border-top: 3px solid rgba(255,255,255,0.3);
+        }
+        .legend-shape.diamond { transform: rotate(45deg); width: 11px; height: 11px; }
+        .legend-shape.square { border-radius: 2px; }
+        .legend-shape.triangle {
+            width: 0; height: 0;
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            border-bottom: 14px solid;
+        }
+        .legend-shape.star {
+            clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+        }
+        .legend-shape.hexagon {
+            clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+        }
+        .legend-line {
+            width: 24px;
+            height: 2px;
+            flex-shrink: 0;
+        }
+        .legend-line.dashed {
+            background: repeating-linear-gradient(90deg, currentColor 0, currentColor 5px, transparent 5px, transparent 9px);
+            height: 2px;
+        }
+        .legend-separator {
+            width: 1px;
+            height: 20px;
+            background: #d1d5db;
+        }
+
+        /* ===== DATA WARNING ===== */
+        .data-warning {
+            background: #fef3c7;
+            color: #92400e;
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            border: 1px solid #fbbf24;
+            white-space: nowrap;
+        }
+
+        /* ===== SCROLLBAR ===== */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #c4c9d1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Stats Bar -->
+        <header id="stats-bar">
+            <h1>SG Review Dashboard</h1>
+            <div class="stat-card">
+                <span class="stat-label">Nodes</span>
+                <span class="stat-value" id="stat-nodes">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Edges</span>
+                <span class="stat-value" id="stat-edges">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Accounts</span>
+                <span class="stat-value" id="stat-accounts">0</span>
+            </div>
+            <div class="stat-card" onclick="filterToUnused()" style="cursor:pointer" title="Click to show only unused SGs">
+                <span class="stat-label">Unused SG</span>
+                <span class="stat-value" id="stat-unused" style="color:#dc2626">0</span>
+            </div>
+            <div class="stat-card" onclick="filterToVulnerable()" style="cursor:pointer" title="Click to show only vulnerable SGs">
+                <span class="stat-label">Vulnerable SG</span>
+                <span class="stat-value" id="stat-vulnerable" style="color:#dc2626">0</span>
+            </div>
+            <div class="toolbar">
+                <button onclick="fitView()" title="Zoom to fit">Fit</button>
+                <button id="btn-physics" onclick="togglePhysics()" title="Toggle physics">Physics</button>
+                <button onclick="exportPNG()" title="Export as PNG">PNG</button>
+                <button onclick="exportUnusedSGsXlsx()" title="Download unused SGs as XLSX">Unused SG ↓</button>
+                <button onclick="exportVulnerableSGsXlsx()" title="Download vulnerable SGs as XLSX">Vuln SG ↓</button>
+            </div>
+        </header>
+
+        <!-- Filter Panel -->
+        <aside id="filter-panel">
+            <!-- Search -->
+            <div class="filter-section">
+                <input type="text" class="search-box" id="search-input" placeholder="Search nodes..." oninput="onSearchInput(this.value)">
+                <span id="search-count" style="display:none;font-size:11px;color:#6b7280;margin-top:4px"></span>
+            </div>
+
+            <!-- Account Filter -->
+            <div class="filter-section">
+                <div class="filter-section-title">
+                    <span>Account</span>
+                    <div class="select-btns">
+                        <button onclick="selectAll('account')">All</button>
+                        <button onclick="selectNone('account')">None</button>
+                    </div>
+                </div>
+                <div class="filter-list" id="account-filter-list"></div>
+            </div>
+
+            <!-- VPC Filter -->
+            <div class="filter-section">
+                <div class="filter-section-title">
+                    <span>VPC</span>
+                    <div class="select-btns">
+                        <button onclick="selectAll('vpc')">All</button>
+                        <button onclick="selectNone('vpc')">None</button>
+                    </div>
+                </div>
+                <div class="filter-list" id="vpc-filter-list"></div>
+            </div>
+
+            <!-- Resource Type Filter -->
+            <div class="filter-section">
+                <div class="filter-section-title">
+                    <span>Resource Type</span>
+                    <div class="select-btns">
+                        <button onclick="selectAll('type')">All</button>
+                        <button onclick="selectNone('type')">None</button>
+                    </div>
+                </div>
+                <div class="filter-list" id="type-filter-list"></div>
+            </div>
+
+            <!-- Unused SG Toggle -->
+            <div class="filter-section">
+                <div class="toggle-row">
+                    <span>Show unused SG</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-unused" checked onchange="onToggleUnused(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Graph -->
+        <main id="graph-container">
+            <div id="network-canvas"></div>
+            <div id="empty-state">
+                <div class="empty-icon">&#128274;</div>
+                <div class="empty-text">No data loaded</div>
+                <div class="empty-hint">Run extract_and_visualize_v2.py to collect AWS data</div>
+            </div>
+            <div id="stabilization-progress">
+                <div id="stabilization-text">Laying out graph...</div>
+                <div id="stabilization-bar-container">
+                    <div id="stabilization-bar"></div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Detail Panel -->
+        <aside id="detail-panel">
+            <div id="detail-content">
+                <div class="detail-placeholder">Click a node to view details</div>
+            </div>
+        </aside>
+
+        <!-- Legend Bar -->
+        <footer id="legend-bar">
+            <div class="legend-item">
+                <div class="legend-shape circle" style="background:#FF6B6B"></div>
+                <span>EC2</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape database" style="background:#4A90D9"></div>
+                <span>RDS</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape diamond" style="background:#9B59B6"></div>
+                <span>LB</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape square" style="background:#2ECC71"></div>
+                <span>VPC Endpoint</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape triangle" style="border-bottom-color:#FF9800"></div>
+                <span>Lambda</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape star" style="background:#E74C3C"></div>
+                <span>ElastiCache</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape triangle" style="border-bottom-color:#FF5722;transform:rotate(180deg)"></div>
+                <span>ECS</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape square" style="background:#E53935;border-radius:2px"></div>
+                <span>Redshift</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape circle" style="background:#7B1FA2;border-radius:40%"></div>
+                <span>OpenSearch</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape square" style="background:#FF6F00;border-radius:2px"></div>
+                <span>EKS</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape square" style="background:#558B2F;border-radius:2px"></div>
+                <span>EFS</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape hexagon" style="background:#F1C40F"></div>
+                <span>SG</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape hexagon" style="background:#555;border:1px dashed #dc2626"></div>
+                <span>Unused SG</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-shape hexagon" style="background:#FEE2E2;border:2px solid #DC2626"></div>
+                <span>Vulnerable SG</span>
+            </div>
+            <div class="legend-separator"></div>
+            <div class="legend-item">
+                <div class="legend-line" style="background:#7f8c8d"></div>
+                <span>uses</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line dashed" style="color:#3498db"></div>
+                <span>ingress</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line dashed" style="color:#e67e22"></div>
+                <span>egress</span>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // ===== DATA SECTION (replaced by Python script) =====
+        const nodesData = [];
+        const edgesData = [];
+        const sgRules = {};
+        const vpcInfo = {};
+        const accountInfo = {};
+        // ===== END DATA SECTION =====
+
+        // State
+        let network = null;
+        let visNodes = null;
+        let visEdges = null;
+        let selectedAccounts = new Set();
+        let selectedVpcs = new Set();
+        let selectedTypes = null;  // initialized dynamically from TYPE_LABELS
+        let showUnusedSGs = true;
+        let searchQuery = '';
+        let physicsEnabled = false;
+        let searchTimeout = null;
+        let filterTimeout = null;
+
+        const TYPE_LABELS = {
+            ec2: 'EC2', rds: 'RDS', lb: 'Load Balancer',
+            vpc_endpoint: 'VPC Endpoint', lambda: 'Lambda',
+            elasticache: 'ElastiCache', elasticache_rg: 'ElastiCache RG',
+            ecs: 'ECS', redshift: 'Redshift', opensearch: 'OpenSearch',
+            docdb: 'DocumentDB', neptune: 'Neptune', memorydb: 'MemoryDB',
+                eks: 'EKS', efs: 'EFS',
+            sg: 'Security Group'
+        };
+
+        const RESOURCE_COLORS = {
+            ec2: '#3B82F6',
+            rds: '#8B5CF6',
+            lb: '#A855F7',
+            lambda: '#FF9800',
+            vpc_endpoint: '#2ECC71',
+            elasticache: '#E74C3C',
+            elasticache_rg: '#E74C3C',
+            ecs: '#FF5722',
+            redshift: '#E53935',
+            opensearch: '#7B1FA2',
+            docdb: '#00897B',
+            neptune: '#1565C0',
+            memorydb: '#AD1457',
+            eks: '#FF6F00',
+            efs: '#558B2F'
+        };
+
+        // ===== INITIALIZATION =====
+        document.addEventListener('DOMContentLoaded', initDashboard);
+
+        function initDashboard() {
+            selectedTypes = new Set(Object.keys(TYPE_LABELS));
+            if (nodesData.length === 0) {
+                document.getElementById('empty-state').style.display = 'flex';
+                document.getElementById('network-canvas').style.display = 'none';
+                updateStats();
+                buildTypeFilter();
+                return;
+            }
+            document.getElementById('empty-state').style.display = 'none';
+            document.getElementById('network-canvas').style.display = 'block';
+
+            var warn = document.createElement('div');
+            warn.className = 'data-warning';
+            warn.textContent = '\u26a0 This file contains real AWS infrastructure data. Do not share publicly.';
+            document.querySelector('.toolbar').before(warn);
+
+            Object.keys(accountInfo).forEach(function(p) { selectedAccounts.add(p); });
+            Object.keys(vpcInfo).forEach(function(v) { selectedVpcs.add(v); });
+            Object.keys(TYPE_LABELS).forEach(function(t) { selectedTypes.add(t); });
+
+            // If no accountInfo, derive from nodes
+            if (Object.keys(accountInfo).length === 0) {
+                nodesData.forEach(function(n) {
+                    if (n.profile_name) selectedAccounts.add(n.profile_name);
+                    if (n.vpc_id) selectedVpcs.add(n.vpc_id);
+                });
+            }
+
+            createNetwork();
+            buildAccountFilter();
+            buildVpcFilter();
+            buildTypeFilter();
+            updateStats();
+        }
+
+        // ===== NODE / EDGE TRANSFORMS =====
+        var nodeMap = {};
+        var adjFrom = {};  // nodeId -> [{to, label, edge}]
+        var adjTo = {};    // nodeId -> [{from, label, edge}]
+
+        function buildNodeMap() {
+            nodeMap = {};
+            nodesData.forEach(function(n) { nodeMap[n.id] = n; });
+        }
+
+        function buildEdgeIndex() {
+            adjFrom = {};
+            adjTo = {};
+            edgesData.forEach(function(e) {
+                if (!adjFrom[e.from]) adjFrom[e.from] = [];
+                adjFrom[e.from].push(e);
+                if (!adjTo[e.to]) adjTo[e.to] = [];
+                adjTo[e.to].push(e);
+            });
+        }
+
+        function createDatabaseSVG(bgColor, borderColor) {
+            var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">'
+                + '<ellipse cx="20" cy="10" rx="16" ry="6" fill="' + bgColor + '" stroke="' + borderColor + '" stroke-width="2"/>'
+                + '<rect x="4" y="10" width="32" height="20" fill="' + bgColor + '" stroke="none"/>'
+                + '<line x1="4" y1="10" x2="4" y2="30" stroke="' + borderColor + '" stroke-width="2"/>'
+                + '<line x1="36" y1="10" x2="36" y2="30" stroke="' + borderColor + '" stroke-width="2"/>'
+                + '<ellipse cx="20" cy="30" rx="16" ry="6" fill="' + bgColor + '" stroke="' + borderColor + '" stroke-width="2"/>'
+                + '</svg>';
+            return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        }
+        var RDS_SVG = createDatabaseSVG('#4A90D9', '#2C5F8A');
+
+        function transformNode(n) {
+            var base = {
+                id: n.id,
+                label: n.label || n.id,
+                title: buildTooltip(n),
+                _raw: n
+            };
+            switch (n.group) {
+                case 'ec2':
+                    if (n.instance_state === 'stopped') {
+                        return Object.assign(base, {
+                            shape: 'dot', size: 14,
+                            color: { background: '#D1D5DB', border: '#9CA3AF' },
+                            shapeProperties: { borderDashes: [4, 4] },
+                            font: { color: '#9CA3AF', strokeWidth: 3, strokeColor: '#ffffff' }
+                        });
+                    }
+                    return Object.assign(base, {
+                        shape: 'dot', size: 20,
+                        color: { background: n.color || '#FF6B6B', border: darken(n.color || '#FF6B6B', 30) }
+                    });
+                case 'rds':
+                    return Object.assign(base, {
+                        shape: 'image',
+                        image: RDS_SVG,
+                        size: 20,
+                        color: { background: '#4A90D9', border: '#2C5F8A' }
+                    });
+                case 'lb':
+                    return Object.assign(base, {
+                        shape: 'diamond', size: 22,
+                        color: { background: '#9B59B6', border: '#6C3483' }
+                    });
+                case 'vpc_endpoint':
+                    return Object.assign(base, {
+                        shape: 'square', size: 16,
+                        color: { background: '#2ECC71', border: '#1E8449' }
+                    });
+                case 'lambda':
+                    return Object.assign(base, {
+                        shape: 'triangle', size: 20,
+                        color: { background: '#FF9800', border: '#E65100' }
+                    });
+                case 'elasticache':
+                    return Object.assign(base, {
+                        shape: 'star', size: 18,
+                        color: { background: '#E74C3C', border: '#922B21' }
+                    });
+                case 'elasticache_rg':
+                    return Object.assign(base, {
+                        shape: 'star', size: 22,
+                        color: { background: '#EC407A', border: '#AD1457' }
+                    });
+                case 'ecs':
+                    return Object.assign(base, {
+                        shape: 'triangleDown', size: 20,
+                        color: { background: '#FF5722', border: '#BF360C' }
+                    });
+                case 'redshift':
+                    return Object.assign(base, {
+                        shape: 'box', size: 18,
+                        color: { background: '#E53935', border: '#B71C1C' }
+                    });
+                case 'opensearch':
+                    return Object.assign(base, {
+                        shape: 'ellipse', size: 18,
+                        color: { background: '#7B1FA2', border: '#4A148C' }
+                    });
+                case 'docdb':
+                    return Object.assign(base, {
+                        shape: 'image',
+                        image: createDatabaseSVG('#00897B', '#004D40'),
+                        size: 18,
+                        color: { background: '#00897B', border: '#004D40' }
+                    });
+                case 'neptune':
+                    return Object.assign(base, {
+                        shape: 'image',
+                        image: createDatabaseSVG('#1565C0', '#0D47A1'),
+                        size: 18,
+                        color: { background: '#1565C0', border: '#0D47A1' }
+                    });
+                case 'memorydb':
+                    return Object.assign(base, {
+                        shape: 'star', size: 16,
+                        color: { background: '#AD1457', border: '#880E4F' }
+                    });
+                case 'sg':
+                    if (n.is_vulnerable) {
+                        return Object.assign(base, {
+                            shape: 'hexagon', size: 20,
+                            color: { background: '#FEE2E2', border: '#DC2626' },
+                            borderWidth: 3,
+                            font: { color: '#991B1B', strokeWidth: 3, strokeColor: '#ffffff' }
+                        });
+                    }
+                    if (n.is_unused) {
+                        return Object.assign(base, {
+                            shape: 'hexagon', size: 16,
+                            color: { background: '#555555', border: '#E74C3C' },
+                            borderWidth: 2,
+                            shapeProperties: { borderDashes: [5, 5] },
+                            font: { color: '#9ca3af', strokeWidth: 3, strokeColor: '#ffffff' }
+                        });
+                    }
+                    return Object.assign(base, {
+                        shape: 'hexagon', size: 16,
+                        color: { background: '#F1C40F', border: '#D4AC0D' }
+                    });
+                default:
+                    return Object.assign(base, { shape: 'dot', size: 15 });
+            }
+        }
+
+        function transformEdge(e, idx) {
+            var base = {
+                id: 'e' + idx,
+                from: e.from,
+                to: e.to,
+                _raw: e
+            };
+            switch (e.label) {
+                case 'uses':
+                    return Object.assign(base, {
+                        dashes: false, width: 1.5,
+                        color: { color: '#7f8c8d', opacity: 0.6 },
+                        arrows: { to: { enabled: true, scaleFactor: 0.5 } }
+                    });
+                case 'ingress':
+                    return Object.assign(base, {
+                        dashes: [8, 4], width: 1.5,
+                        color: { color: '#3498db', opacity: 0.7 },
+                        arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+                        label: 'ingress',
+                        font: { size: 9, color: '#3498db', strokeWidth: 2, strokeColor: '#ffffff' }
+                    });
+                case 'egress':
+                    return Object.assign(base, {
+                        dashes: [8, 4], width: 1.5,
+                        color: { color: '#e67e22', opacity: 0.7 },
+                        arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+                        label: 'egress',
+                        font: { size: 9, color: '#e67e22', strokeWidth: 2, strokeColor: '#ffffff' }
+                    });
+                default:
+                    return base;
+            }
+        }
+
+        function buildTooltip(n) {
+            var lines = ['<b>' + esc(n.label || n.id) + '</b>'];
+            lines.push('Type: ' + (TYPE_LABELS[n.group] || n.group));
+            if (n.account_name) lines.push('Account: ' + esc(n.account_name));
+            if (n.vpc_id) lines.push('VPC: ' + getVpcName(n.vpc_id));
+            if (n.instance_state) lines.push('State: ' + n.instance_state);
+if (n.lb_type) lines.push('LB Type: ' + esc(n.lb_type));
+                if (n.engine) lines.push('Engine: ' + esc(n.engine));
+            if (n.group === 'sg' && n.is_vulnerable) {
+                var vCount = (n.vulnerabilities || []).length;
+                lines.push('<span style="color:#dc2626">⚠ ' + vCount + ' vulnerable rules</span>');
+            }
+            if (n.group === 'sg' && n.is_unused) lines.push('<span style="color:#dc2626">Unused</span>');
+            return lines.join('<br>');
+        }
+
+        function darken(hex, amount) {
+            if (!hex || hex.charAt(0) !== '#') return '#333333';
+            var num = parseInt(hex.slice(1), 16);
+            var r = Math.max(0, (num >> 16) - amount);
+            var g = Math.max(0, ((num >> 8) & 0x00FF) - amount);
+            var b = Math.max(0, (num & 0x0000FF) - amount);
+            return '#' + (r << 16 | g << 8 | b).toString(16).padStart(6, '0');
+        }
+
+        function esc(s) {
+            if (!s) return '';
+            var d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function getVpcName(vpcId) {
+            if (!vpcId) return '-';
+            var info = vpcInfo[vpcId];
+            if (info && info.name) return esc(info.name);
+            // Strip profile prefix for display
+            var parts = vpcId.split(':');
+            return parts.length > 1 ? parts[1] : vpcId;
+        }
+
+        // ===== NETWORK CREATION =====
+        function createNetwork() {
+            buildNodeMap();
+            buildEdgeIndex();
+            var transformedNodes = nodesData.map(transformNode);
+            var transformedEdges = edgesData.map(transformEdge);
+
+            // Adaptive stabilization: scale iterations by node count
+            var nodeCount = transformedNodes.length;
+            var adaptiveIterations = Math.min(800, Math.max(200, Math.round(200 + (nodeCount - 50) * 0.5)));
+            if (nodeCount <= 50) adaptiveIterations = 200;
+
+            visNodes = new vis.DataSet(transformedNodes);
+            visEdges = new vis.DataSet(transformedEdges);
+
+            var container = document.getElementById('network-canvas');
+            var data = { nodes: visNodes, edges: visEdges };
+
+            var options = {
+                nodes: {
+                    font: { size: 11, color: '#1f2937', strokeWidth: 3, strokeColor: '#ffffff' },
+                    borderWidth: 2,
+                    shadow: false
+                },
+                edges: {
+                    font: { size: 9, color: '#6b7280', strokeWidth: 2, strokeColor: '#ffffff', align: 'middle' },
+                    smooth: { enabled: true, type: 'continuous', roundness: 0.12 },
+                    width: 1
+                },
+                physics: {
+                    enabled: true,
+                    solver: 'barnesHut',
+                    barnesHut: {
+                        gravitationalConstant: -3000,
+                        centralGravity: 0.3,
+                        springLength: 150,
+                        springConstant: 0.04,
+                        damping: 0.15,
+                        avoidOverlap: 0.5
+                    },
+                    stabilization: { enabled: true, iterations: adaptiveIterations, updateInterval: 25, fit: true },
+                    maxVelocity: 50,
+                    minVelocity: 1.5
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 200,
+                    navigationButtons: false,
+                    keyboard: true,
+                    multiselect: true
+                },
+                layout: { improvedLayout: false, randomSeed: 42 }
+            };
+
+            // Show loading overlay before network creation for immediate feedback
+            var prog = document.getElementById('stabilization-progress');
+            prog.classList.add('active');
+            document.getElementById('stabilization-text').textContent = 'Laying out ' + nodeCount + ' nodes...';
+
+            // requestAnimationFrame ensures overlay paints before heavy network creation
+            requestAnimationFrame(function() {
+                network = new vis.Network(container, data, options);
+
+                // Stabilization progress
+                network.on('stabilizationProgress', function(p) {
+                    var pct = Math.round((p.iterations / p.total) * 100);
+                    document.getElementById('stabilization-bar').style.width = pct + '%';
+                    document.getElementById('stabilization-text').textContent = 'Laying out ' + nodeCount + ' nodes... ' + pct + '%';
+                });
+                network.on('stabilizationIterationsDone', function() {
+                    prog.classList.remove('active');
+                    document.getElementById('stabilization-bar').style.width = '0%';
+                    network.setOptions({ physics: { enabled: false } });
+                    physicsEnabled = false;
+                });
+
+                // Click handler
+                network.on('click', function(params) {
+                    if (params.nodes.length > 0) {
+                        var nodeId = params.nodes[0];
+                        var node = visNodes.get(nodeId);
+                        if (node && node._raw) showDetail(node._raw);
+                    } else {
+                        closeDetail();
+                    }
+                });
+            });
+        }
+
+        // ===== FILTER BUILDERS =====
+        function buildAccountFilter() {
+            var container = document.getElementById('account-filter-list');
+            container.innerHTML = '';
+            var accounts = Object.keys(accountInfo);
+            if (accounts.length === 0) {
+                // Derive from nodesData
+                var seen = {};
+                nodesData.forEach(function(n) {
+                    if (n.profile_name && !seen[n.profile_name]) {
+                        seen[n.profile_name] = { account_name: n.account_name || n.profile_name, color: '#667eea' };
+                    }
+                });
+                accounts = Object.keys(seen);
+                accounts.forEach(function(p) {
+                    addFilterCheckbox(container, 'account', p, seen[p].account_name, seen[p].color, selectedAccounts.has(p));
+                });
+            } else {
+                accounts.forEach(function(p) {
+                    var info = accountInfo[p];
+                    addFilterCheckbox(container, 'account', p, info.account_name + ' (' + p + ')', info.color, selectedAccounts.has(p));
+                });
+            }
+        }
+
+        function buildVpcFilter() {
+            var container = document.getElementById('vpc-filter-list');
+            container.innerHTML = '';
+            var seen = {};
+            Object.keys(vpcInfo).forEach(function(vpcId) {
+                var profileName = vpcId.split(':')[0];
+                if (selectedAccounts.size > 0 && !selectedAccounts.has(profileName)) {
+                    var hasPrefix = vpcId.indexOf(':') !== -1;
+                    if (hasPrefix) return;
+                }
+                seen[vpcId] = true;
+                var info = vpcInfo[vpcId];
+                addFilterCheckbox(container, 'vpc', vpcId, info.name || vpcId, info.color, selectedVpcs.has(vpcId));
+            });
+            // Include VPCs found in nodesData but missing from vpcInfo
+            nodesData.forEach(function(n) {
+                if (n.vpc_id && !seen[n.vpc_id]) {
+                    var profileName = n.vpc_id.split(':')[0];
+                    if (selectedAccounts.size > 0 && !selectedAccounts.has(profileName)) return;
+                    seen[n.vpc_id] = true;
+                    selectedVpcs.add(n.vpc_id);
+                    addFilterCheckbox(container, 'vpc', n.vpc_id, n.vpc_id, '#999999', selectedVpcs.has(n.vpc_id));
+                }
+            });
+        }
+
+        function buildTypeFilter() {
+            var container = document.getElementById('type-filter-list');
+            container.innerHTML = '';
+            var typeColors = {
+                ec2: '#FF6B6B', rds: '#4A90D9', lb: '#9B59B6', vpc_endpoint: '#2ECC71',
+                lambda: '#FF9800', elasticache: '#E74C3C', elasticache_rg: '#EC407A',
+                ecs: '#FF5722', redshift: '#E53935', opensearch: '#7B1FA2',
+                docdb: '#00897B', neptune: '#1565C0', memorydb: '#AD1457', eks: '#FF6F00', efs: '#558B2F', sg: '#F1C40F'
+            };
+            Object.keys(TYPE_LABELS).forEach(function(t) {
+                addFilterCheckbox(container, 'type', t, TYPE_LABELS[t], typeColors[t] || '#999', selectedTypes.has(t));
+            });
+        }
+
+        function addFilterCheckbox(container, group, value, label, color, checked) {
+            var item = document.createElement('div');
+            item.className = 'filter-item';
+            var id = 'filter-' + group + '-' + value.replace(/[^a-zA-Z0-9]/g, '_');
+            item.innerHTML = '<input type="checkbox" id="' + id + '" ' + (checked ? 'checked' : '') + '>' +
+                '<span class="color-dot" style="background:' + esc(color) + '"></span>' +
+                '<label for="' + id + '">' + esc(label) + '</label>';
+            var cb = item.querySelector('input');
+            cb.addEventListener('change', function() {
+                onFilterChange(group, value, this.checked);
+            });
+            container.appendChild(item);
+        }
+
+        function debouncedApplyFilters() {
+            clearTimeout(filterTimeout);
+            filterTimeout = setTimeout(applyFilters, 150);
+        }
+
+        function onFilterChange(group, value, checked) {
+            if (group === 'account') {
+                if (checked) selectedAccounts.add(value); else selectedAccounts.delete(value);
+                // Update VPC selections first, then rebuild filter once
+                Object.keys(vpcInfo).forEach(function(vpcId) {
+                    var prefix = vpcId.split(':')[0];
+                    if (prefix === value) {
+                        if (checked) selectedVpcs.add(vpcId); else selectedVpcs.delete(vpcId);
+                    }
+                });
+                buildVpcFilter();
+            } else if (group === 'vpc') {
+                if (checked) selectedVpcs.add(value); else selectedVpcs.delete(value);
+            } else if (group === 'type') {
+                if (checked) selectedTypes.add(value); else selectedTypes.delete(value);
+            }
+            debouncedApplyFilters();
+        }
+
+        function selectAll(group) {
+            if (group === 'account') {
+                Object.keys(accountInfo).forEach(function(p) { selectedAccounts.add(p); });
+                buildAccountFilter();
+                buildVpcFilter();
+            } else if (group === 'vpc') {
+                Object.keys(vpcInfo).forEach(function(v) {
+                    var prefix = v.split(':')[0];
+                    if (selectedAccounts.has(prefix)) selectedVpcs.add(v);
+                });
+                buildVpcFilter();
+            } else if (group === 'type') {
+                Object.keys(TYPE_LABELS).forEach(function(t) { selectedTypes.add(t); });
+                buildTypeFilter();
+            }
+            debouncedApplyFilters();
+        }
+
+        function selectNone(group) {
+            if (group === 'account') {
+                selectedAccounts.clear();
+                buildAccountFilter();
+                buildVpcFilter();
+            } else if (group === 'vpc') {
+                selectedVpcs.clear();
+                buildVpcFilter();
+            } else if (group === 'type') {
+                selectedTypes.clear();
+                buildTypeFilter();
+            }
+            debouncedApplyFilters();
+        }
+
+        function onToggleUnused(checked) {
+            showUnusedSGs = checked;
+            debouncedApplyFilters();
+        }
+
+        function onSearchInput(val) {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(function() {
+                searchQuery = val.trim().toLowerCase();
+                applyFilters();
+            }, 300);
+        }
+
+        function filterToUnused() {
+            var input = document.getElementById('search-input');
+            if (searchQuery === '__unused__') {
+                searchQuery = '';
+                input.value = '';
+            } else {
+                searchQuery = '__unused__';
+                input.value = '';
+            }
+            applyFilters();
+        }
+
+        function filterToVulnerable() {
+            var input = document.getElementById('search-input');
+            if (searchQuery === '__vulnerable__') {
+                searchQuery = '';
+                input.value = '';
+            } else {
+                searchQuery = '__vulnerable__';
+                input.value = '';
+            }
+            applyFilters();
+        }
+
+        // ===== FILTERING ENGINE =====
+        function applyFilters() {
+            if (!visNodes || !visEdges) return;
+
+            var visibleIds = new Set();
+
+            nodesData.forEach(function(n) {
+                var visible = true;
+
+                if (n.profile_name && !selectedAccounts.has(n.profile_name)) visible = false;
+
+                if (visible && n.vpc_id && !selectedVpcs.has(n.vpc_id)) visible = false;
+
+                // Type filter
+                if (visible && !selectedTypes.has(n.group)) visible = false;
+
+                // Unused SG
+                if (visible && n.group === 'sg' && n.is_unused && !showUnusedSGs) visible = false;
+
+                // Search (including special tokens for stat-card filters)
+                if (visible && searchQuery) {
+                    if (searchQuery === '__unused__') {
+                        if (!(n.group === 'sg' && n.is_unused)) visible = false;
+                    } else if (searchQuery === '__vulnerable__') {
+                        if (!(n.group === 'sg' && n.is_vulnerable)) visible = false;
+                    } else {
+                        var q = searchQuery;
+                        var matchLabel = (n.label || '').toLowerCase().indexOf(q) !== -1;
+                        var matchId = (n.id || '').toLowerCase().indexOf(q) !== -1;
+                        if (!matchLabel && !matchId) visible = false;
+                    }
+                }
+
+                if (visible) visibleIds.add(n.id);
+            });
+
+            // Pull in connected SGs for visible resources (using edge index)
+            visibleIds.forEach(function(nodeId) {
+                (adjFrom[nodeId] || []).forEach(function(e) {
+                    if (e.label === 'uses') {
+                        var sgNode = nodeMap[e.to];
+                        if (sgNode && selectedTypes.has('sg')) {
+                            if (!sgNode.is_unused || showUnusedSGs) {
+                                visibleIds.add(e.to);
+                            }
+                        }
+                    }
+                });
+            });
+
+            // Update node visibility
+            var nodeUpdates = [];
+            visNodes.forEach(function(node) {
+                var shouldShow = visibleIds.has(node.id);
+                if (!!node.hidden === shouldShow) {
+                    nodeUpdates.push({ id: node.id, hidden: !shouldShow });
+                }
+            });
+            if (nodeUpdates.length > 0) visNodes.update(nodeUpdates);
+
+            // Update edge visibility
+            var edgeUpdates = [];
+            visEdges.forEach(function(edge) {
+                var shouldShow = visibleIds.has(edge.from) && visibleIds.has(edge.to);
+                if (!!edge.hidden === shouldShow) {
+                    edgeUpdates.push({ id: edge.id, hidden: !shouldShow });
+                }
+            });
+            if (edgeUpdates.length > 0) visEdges.update(edgeUpdates);
+
+            // Update search count
+            var searchCountEl = document.getElementById('search-count');
+            if (searchQuery) {
+                var countLabel = searchQuery === '__unused__' ? visibleIds.size + ' unused SGs' :
+                                 searchQuery === '__vulnerable__' ? visibleIds.size + ' vulnerable SGs' :
+                                 visibleIds.size + ' matches';
+                searchCountEl.textContent = countLabel;
+                searchCountEl.style.display = 'block';
+            } else {
+                searchCountEl.style.display = 'none';
+            }
+
+            updateStats();
+        }
+
+        // ===== STATS =====
+        function updateStats() {
+            var visibleNodes = 0;
+            var visibleEdges = 0;
+            var unusedSGs = 0;
+            var vulnerableSGs = 0;
+
+            if (visNodes) {
+                visNodes.forEach(function(n) {
+                    if (!n.hidden) {
+                        visibleNodes++;
+                        if (n._raw && n._raw.group === 'sg' && n._raw.is_unused) unusedSGs++;
+                        if (n._raw && n._raw.group === 'sg' && n._raw.is_vulnerable) vulnerableSGs++;
+                    }
+                });
+                visEdges.forEach(function(e) { if (!e.hidden) visibleEdges++; });
+            } else {
+                nodesData.forEach(function(n) {
+                    if (n.group === 'sg' && n.is_unused) unusedSGs++;
+                    if (n.group === 'sg' && n.is_vulnerable) vulnerableSGs++;
+                });
+            }
+
+            document.getElementById('stat-nodes').textContent = visibleNodes || nodesData.length;
+            document.getElementById('stat-edges').textContent = visibleEdges || edgesData.length;
+            document.getElementById('stat-accounts').textContent = Object.keys(accountInfo).length ||
+                new Set(nodesData.map(function(n) { return n.profile_name; }).filter(Boolean)).size;
+            document.getElementById('stat-unused').textContent = unusedSGs;
+            document.getElementById('stat-vulnerable').textContent = vulnerableSGs;
+        }
+
+        // ===== DETAIL PANEL =====
+        function showDetail(nodeData) {
+            var app = document.getElementById('app');
+            app.classList.add('detail-open');
+            var panel = document.getElementById('detail-content');
+
+            if (nodeData.group === 'sg') {
+                renderSGDetail(panel, nodeData);
+            } else {
+                renderResourceDetail(panel, nodeData);
+            }
+        }
+
+        function closeDetail() {
+            document.getElementById('app').classList.remove('detail-open');
+            document.getElementById('detail-content').innerHTML =
+                '<div class="detail-placeholder">Click a node to view details</div>';
+        }
+
+        function renderSGDetail(panel, n) {
+            var rules = sgRules[n.id] || { ingress: [], egress: [] };
+            var inCount = (rules.ingress || []).length;
+            var outCount = (rules.egress || []).length;
+
+            var html = '<div class="detail-header">' +
+                '<div class="sg-hex-mini"></div>' +
+                '<h3>' + esc(n.label) + '</h3>' +
+                '<button class="close-btn" onclick="closeDetail()">&times;</button>' +
+                '</div>' +
+                '<div class="detail-meta">' +
+                '<div class="meta-row"><span class="meta-label">SG ID</span>' + esc(n.id) + '</div>';
+            if (n.description) html += '<div class="meta-row"><span class="meta-label">Description</span>' + esc(n.description) + '</div>';
+            if (n.account_name) html += '<div class="meta-row"><span class="meta-label">Account</span>' + esc(n.account_name) + '</div>';
+            html += '<div class="meta-row"><span class="meta-label">VPC</span>' + getVpcName(n.vpc_id) + '</div>' +
+                '<div class="meta-row"><span class="meta-label">Status</span>' +
+                (n.is_vulnerable ? '<span class="badge badge-danger">⚠ Vulnerable</span> ' : '') +
+                (n.is_unused ? '<span class="badge badge-danger">Unused</span>' : '<span class="badge badge-success">In Use</span>') +
+                '</div>';
+            if (n.tags && Object.keys(n.tags).length > 0) {
+                html += '<div class="meta-row"><span class="meta-label">Tags</span><div style="display:inline">';
+                Object.keys(n.tags).forEach(function(k) {
+                    html += '<span class="badge" style="background:#e2e8f0;color:#334155;margin:1px 2px;font-size:10px">' + esc(k) + ': ' + esc(n.tags[k]) + '</span>';
+                });
+                html += '</div></div>';
+            }
+            html += '</div>';
+            if (n.transitive_exposure && n.transitive_exposure.length > 0) {
+                html += '<div class="vuln-summary" style="background:#fef3c7;border-color:#f59e0b">' +
+                    '<div class="vuln-header" style="color:#92400e">⚠ Indirect Exposure via SG-to-SG Reference</div>';
+                n.transitive_exposure.forEach(function(te) {
+                    html += '<div class="vuln-item"><span class="vuln-service">Exposed via ' + esc(te.exposed_via) + '</span>' +
+                        '<span class="vuln-source">' + esc(te.source) + '</span></div>';
+                });
+                html += '</div>';
+            }
+
+            // Vulnerability summary section
+            if (n.is_vulnerable && n.vulnerabilities && n.vulnerabilities.length > 0) {
+                html += '<div class="vuln-summary">' +
+                    '<div class="vuln-header">⚠ Vulnerable rules detected (' + n.vulnerabilities.length + ')</div>';
+                n.vulnerabilities.forEach(function(v) {
+                    var sevClass = v.severity === 'critical' ? 'vuln-severity-critical' :
+                                   v.severity === 'medium' ? 'vuln-severity-high' : 'vuln-severity-high';
+                    var dirLabel = v.direction === 'egress' ? '↑OUT ' :
+                                   v.direction === 'compliance' ? '📋 ' : '↓IN ';
+                    html += '<div class="vuln-item">' +
+                        '<span class="vuln-port">' + dirLabel + esc(v.port) + '/' + esc(v.protocol) + '</span>' +
+                        '<span class="vuln-service">' + esc(v.service) + '</span>' +
+                        '<span class="vuln-source">' + esc(v.source) + '</span>' +
+                        '<span class="vuln-severity ' + sevClass + '">' + esc(v.severity) + '</span>' +
+                        '</div>';
+                });
+                html += '</div>';
+            }
+
+            html += '<div class="rule-tabs">' +
+                '<button class="tab-btn active" onclick="switchTab(\'ingress\')">Inbound (' + inCount + ')</button>' +
+                '<button class="tab-btn" onclick="switchTab(\'egress\')">Outbound (' + outCount + ')</button>' +
+                '</div>' +
+                '<div class="rules-content" id="tab-ingress">' + renderRulesTable(rules.ingress || [], 'ingress', n) + '</div>' +
+                '<div class="rules-content hidden" id="tab-egress">' + renderRulesTable(rules.egress || [], 'egress', n) + '</div>';
+
+            // Attached Resources section
+            var attached = getAttachedResources(n.id);
+            html += '<div class="section-title">Attached Resources (' + attached.length + ')</div>';
+            if (attached.length === 0) {
+                html += '<div class="no-rules">No resources attached</div>';
+            } else {
+                attached.forEach(function(res) {
+                    var typeLabel = TYPE_LABELS[res.group] || res.group;
+                    var colorDot = RESOURCE_COLORS[res.group] || '#6b7280';
+                    html += '<div class="res-card" data-focus-node="' + esc(res.id) + '">' +
+                        '<span class="res-dot" style="background:' + colorDot + '"></span>' +
+                        '<div class="res-card-info">' +
+                        '<div class="res-card-name">' + esc(res.label) + '</div>' +
+                        '<div class="res-card-meta">' + typeLabel + '</div>' +
+                        '</div>' +
+                        '<span class="sg-arrow">&rarr;</span></div>';
+                });
+            }
+
+            panel.innerHTML = html;
+            bindFocusNodeHandlers(panel);
+        }
+
+        function renderResourceDetail(panel, n) {
+            var connectedSGs = getConnectedSGs(n.id);
+            var typeLabel = TYPE_LABELS[n.group] || n.group;
+
+            var html = '<div class="detail-header">' +
+                '<h3>' + esc(n.label) + '</h3>' +
+                '<button class="close-btn" onclick="closeDetail()">&times;</button>' +
+                '</div>' +
+                '<div class="detail-meta">' +
+                '<div class="meta-row"><span class="meta-label">Type</span>' + esc(typeLabel) + '</div>' +
+                '<div class="meta-row"><span class="meta-label">ID</span><span style="word-break:break-all">' + esc(n.id) + '</span></div>';
+            if (n.account_name) html += '<div class="meta-row"><span class="meta-label">Account</span>' + esc(n.account_name) + '</div>';
+            html += '<div class="meta-row"><span class="meta-label">VPC</span>' + getVpcName(n.vpc_id) + '</div>';
+            if (n.instance_state) html += '<div class="meta-row"><span class="meta-label">State</span>' + esc(n.instance_state) + '</div>';
+            if (n.lb_type) html += '<div class="meta-row"><span class="meta-label">LB Type</span>' + esc(n.lb_type) + '</div>';
+            if (n.engine) html += '<div class="meta-row"><span class="meta-label">Engine</span>' + esc(n.engine) + '</div>';
+            if (n.public_ip) html += '<div class="meta-row"><span class="meta-label">Public IP</span><span class="badge badge-danger">' + esc(n.public_ip) + '</span></div>';
+            if (n.publicly_accessible) html += '<div class="meta-row"><span class="meta-label">Public Access</span><span class="badge badge-danger">Publicly Accessible</span></div>';
+            if (n.tags && Object.keys(n.tags).length > 0) {
+                html += '<div class="meta-row"><span class="meta-label">Tags</span><div style="display:inline">';
+                Object.keys(n.tags).forEach(function(k) {
+                    html += '<span class="badge" style="background:#e2e8f0;color:#334155;margin:1px 2px;font-size:10px">' + esc(k) + ': ' + esc(n.tags[k]) + '</span>';
+                });
+                html += '</div></div>';
+            }
+            html += '</div>';
+
+            html += '<div class="section-title">Connected Security Groups (' + connectedSGs.length + ')</div>';
+            connectedSGs.forEach(function(sg) {
+                html += '<div class="sg-card" data-focus-node="' + esc(sg.id) + '">' +
+                    '<div class="sg-hex-mini"></div>' +
+                    '<div class="sg-card-info">' +
+                    '<div class="sg-card-name">' + esc(sg.label) + '</div>' +
+                    '<div class="sg-card-id">' + esc(sg.id) + '</div>' +
+                    '</div>' +
+                    '<span class="sg-arrow">&rarr;</span></div>';
+            });
+
+            panel.innerHTML = html;
+            bindFocusNodeHandlers(panel);
+        }
+
+        function bindFocusNodeHandlers(container) {
+            container.querySelectorAll('[data-focus-node]').forEach(function(el) {
+                el.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    focusNode(this.getAttribute('data-focus-node'));
+                });
+            });
+        }
+
+        function getConnectedSGs(nodeId) {
+            var result = [];
+            (adjFrom[nodeId] || []).forEach(function(e) {
+                if (e.label === 'uses') {
+                    var sg = nodeMap[e.to];
+                    if (sg && (!visNodes || !visNodes.get(e.to) || !visNodes.get(e.to).hidden)) result.push(sg);
+                }
+            });
+            return result;
+        }
+
+        function getAttachedResources(sgId) {
+            var result = [];
+            (adjTo[sgId] || []).forEach(function(e) {
+                if (e.label === 'uses') {
+                    var resource = nodeMap[e.from];
+                    if (resource && (!visNodes || !visNodes.get(e.from) || !visNodes.get(e.from).hidden)) result.push(resource);
+                }
+            });
+            var typeOrder = {ec2:0, rds:1, lb:2, lambda:3, vpc_endpoint:4, elasticache:5, elasticache_rg:6, ecs:7, redshift:8, opensearch:9, docdb:10, neptune:11, memorydb:12, eks:13, efs:14};
+            result.sort(function(a, b) {
+                var oa = typeOrder[a.group] !== undefined ? typeOrder[a.group] : 99;
+                var ob = typeOrder[b.group] !== undefined ? typeOrder[b.group] : 99;
+                return oa - ob || (a.label || '').localeCompare(b.label || '');
+            });
+            return result;
+        }
+
+        function switchTab(tab) {
+            var tabs = document.querySelectorAll('.tab-btn');
+            tabs.forEach(function(t) {
+                t.classList.toggle('active', t.textContent.toLowerCase().indexOf(tab === 'ingress' ? 'inbound' : 'outbound') !== -1);
+            });
+            document.getElementById('tab-ingress').classList.toggle('hidden', tab !== 'ingress');
+            document.getElementById('tab-egress').classList.toggle('hidden', tab !== 'egress');
+        }
+
+        // ===== RULES TABLE RENDERING =====
+        var SAFE_PUBLIC_PORTS = {80: true, 443: true};
+        var SENSITIVE_PORTS_SET = {22:1,3389:1,3306:1,5432:1,1433:1,1521:1,6379:1,27017:1,9200:1,5601:1,8080:1,8443:1,21:1,23:1,445:1,135:1};
+
+        function isRuleVulnerable(rule, src) {
+            if (!src.isOpen) return false;
+            var proto = rule.IpProtocol;
+            if (proto === '-1' || proto === -1) return true;
+            var from = rule.FromPort, to = rule.ToPort;
+            if (from === null || to === null || from === undefined || to === undefined) return false;
+            from = parseInt(from); to = parseInt(to);
+            if (from === to && SAFE_PUBLIC_PORTS[from]) return false;
+            for (var p in SENSITIVE_PORTS_SET) {
+                var port = parseInt(p);
+                if (from <= port && port <= to) return true;
+            }
+            return false;
+        }
+
+        function renderRulesTable(rules, direction, nodeData) {
+            if (rules.length === 0) return '<div class="no-rules">No rules</div>';
+
+            var html = '<table class="rules-table"><thead><tr>' +
+                '<th>Protocol</th><th>Port</th>' +
+                '<th>' + (direction === 'ingress' ? 'Source' : 'Destination') + '</th>' +
+                '<th>Description</th></tr></thead><tbody>';
+
+            rules.forEach(function(rule) {
+                var protocol = formatProtocol(rule.IpProtocol);
+                var portRange = formatPort(rule.IpProtocol, rule.FromPort, rule.ToPort);
+                var sources = [];
+
+                (rule.IpRanges || []).forEach(function(r) {
+                    sources.push({ value: r.CidrIp, desc: r.Description || '', isOpen: r.CidrIp === '0.0.0.0/0', type: 'cidr' });
+                });
+                (rule.Ipv6Ranges || []).forEach(function(r) {
+                    sources.push({ value: r.CidrIpv6, desc: r.Description || '', isOpen: r.CidrIpv6 === '::/0', type: 'cidr' });
+                });
+                (rule.UserIdGroupPairs || []).forEach(function(r) {
+                    sources.push({ value: r.GroupId, desc: r.Description || '', type: 'sg' });
+                });
+                (rule.PrefixListIds || []).forEach(function(r) {
+                    sources.push({ value: r.PrefixListId, desc: r.Description || '', type: 'prefix' });
+                });
+
+                if (sources.length === 0) sources.push({ value: '-', desc: '', type: 'unknown' });
+
+                sources.forEach(function(src, idx) {
+                    var rowClass = '';
+                    if (direction === 'ingress' && isRuleVulnerable(rule, src)) {
+                        rowClass = ' class="rule-vulnerable"';
+                    } else if (src.isOpen) {
+                        rowClass = ' class="rule-open-access"';
+                    }
+                    html += '<tr' + rowClass + '>';
+                    if (idx === 0) {
+                        html += '<td rowspan="' + sources.length + '">' + protocol + '</td>';
+                        html += '<td rowspan="' + sources.length + '">' + portRange + '</td>';
+                    }
+                    html += '<td>' + formatSource(src) + '</td>';
+                    html += '<td>' + esc(src.desc) + '</td></tr>';
+                });
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function formatProtocol(p) {
+            if (!p || p === '-1') return 'All';
+            return p.toUpperCase();
+        }
+
+        function formatPort(protocol, from, to) {
+            if (!protocol || protocol === '-1') return 'All';
+            if (protocol === 'icmp') return 'N/A';
+            if (from === null && to === null) return 'All';
+            if (from === to) return String(from);
+            return from + ' - ' + to;
+        }
+
+        function formatSource(src) {
+            if (src.type === 'sg') {
+                return '<a href="#" class="source-sg" data-focus-node="' + esc(src.value) + '">' + esc(src.value) + '</a>';
+            }
+            if (src.isOpen) {
+                return '<span class="source-open">&#9888; ' + esc(src.value) + '</span>';
+            }
+            return esc(src.value);
+        }
+
+        // ===== NODE FOCUS =====
+        function focusNode(nodeId) {
+            if (!network) return;
+            var targetId = nodeId;
+            if (!visNodes.get(targetId)) {
+                // Try prefixed match
+                var match = nodesData.find(function(n) { return n.id.endsWith(':' + nodeId); });
+                if (match) targetId = match.id;
+            }
+            if (visNodes.get(targetId)) {
+                network.selectNodes([targetId]);
+                network.focus(targetId, { scale: 1.2, animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+                var node = visNodes.get(targetId);
+                if (node && node._raw) showDetail(node._raw);
+            }
+        }
+
+        // ===== TOOLBAR =====
+        function fitView() {
+            if (network) network.fit({ animation: true });
+        }
+
+        function togglePhysics() {
+            physicsEnabled = !physicsEnabled;
+            if (network) network.setOptions({ physics: { enabled: physicsEnabled } });
+            document.getElementById('btn-physics').classList.toggle('active', physicsEnabled);
+        }
+
+        function exportPNG() {
+            if (!network) return;
+            var canvas = document.querySelector('#network-canvas canvas');
+            if (!canvas) return;
+            var link = document.createElement('a');
+            link.download = 'sg-dashboard-' + new Date().toISOString().slice(0, 10) + '.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function exportUnusedSGsXlsx() {
+            var unused = nodesData.filter(function(n) {
+                return n.group === 'sg' && n.is_unused;
+            });
+            if (unused.length === 0) {
+                alert('No unused Security Groups found.');
+                return;
+            }
+            var rows = unused.map(function(n) {
+                var sgId = n.id.indexOf(':') !== -1 ? n.id.split(':')[1] : n.id;
+                var vpcId = n.vpc_id && n.vpc_id.indexOf(':') !== -1 ? n.vpc_id.split(':')[1] : (n.vpc_id || '');
+                var rules = sgRules[n.id] || { ingress: [], egress: [] };
+                return {
+                    'Account': n.account_name || '',
+                    'Profile': n.profile_name || '',
+                    'SG ID': sgId,
+                    'SG Name': n.label || '',
+                    'VPC ID': vpcId,
+                    'Ingress Rules': rules.ingress ? rules.ingress.length : 0,
+                    'Egress Rules': rules.egress ? rules.egress.length : 0
+                };
+            });
+            rows.sort(function(a, b) {
+                return a.Account.localeCompare(b.Account) || a['SG Name'].localeCompare(b['SG Name']);
+            });
+            var ws = XLSX.utils.json_to_sheet(rows);
+            ws['!cols'] = [
+                { wch: 22 }, { wch: 12 }, { wch: 24 },
+                { wch: 50 }, { wch: 24 }, { wch: 14 }, { wch: 14 }
+            ];
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Unused SGs');
+            XLSX.writeFile(wb, 'unused_security_groups.xlsx');
+        }
+
+        function exportVulnerableSGsXlsx() {
+            var vulnNodes = nodesData.filter(function(n) {
+                return n.group === 'sg' && n.is_vulnerable;
+            });
+            if (vulnNodes.length === 0) {
+                alert('No vulnerable Security Groups found.');
+                return;
+            }
+            var rows = [];
+            vulnNodes.forEach(function(n) {
+                var sgId = n.id.indexOf(':') !== -1 ? n.id.split(':')[1] : n.id;
+                var vpcId = n.vpc_id && n.vpc_id.indexOf(':') !== -1 ? n.vpc_id.split(':')[1] : (n.vpc_id || '');
+                (n.vulnerabilities || []).forEach(function(v) {
+                    rows.push({
+                        'Account': n.account_name || '',
+                        'Profile': n.profile_name || '',
+                        'SG ID': sgId,
+                        'SG Name': n.label || '',
+                        'VPC ID': vpcId,
+                        'Port': v.port + '/' + v.protocol,
+                        'Service': v.service,
+                        'Source': v.source,
+                        'Severity': v.severity
+                    });
+                });
+            });
+            rows.sort(function(a, b) {
+                var sevOrder = { critical: 0, high: 1 };
+                var sa = sevOrder[a.Severity] || 2, sb = sevOrder[b.Severity] || 2;
+                return sa - sb || a.Account.localeCompare(b.Account) || a['SG Name'].localeCompare(b['SG Name']);
+            });
+            var ws = XLSX.utils.json_to_sheet(rows);
+            ws['!cols'] = [
+                { wch: 22 }, { wch: 12 }, { wch: 24 }, { wch: 50 },
+                { wch: 24 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 10 }
+            ];
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Vulnerable SGs');
+            XLSX.writeFile(wb, 'vulnerable_security_groups.xlsx');
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeDetail();
+            if ((e.key === '/' || (e.ctrlKey && e.key === 'f')) && e.target.tagName !== 'INPUT') {
+                e.preventDefault();
+                document.getElementById('search-input').focus();
+            }
+            if (e.key === 'f' && e.target.tagName !== 'INPUT' && !e.ctrlKey) fitView();
+        });
+    </script>
+</body>
+</html>

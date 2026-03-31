@@ -1,0 +1,30 @@
+# Generated dashboard files (contain real AWS data)
+sg_interactive_graph_v2.html
+sg_demo_dashboard.html
+
+# Windows NTFS artifacts
+*Zone.Identifier
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Environment
+.env
+.venv/
+venv/
