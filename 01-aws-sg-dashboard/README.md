@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-An interactive dashboard for visualizing relationships between EC2, RDS, Lambda, ECS, ElastiCache, VPC Endpoints, and Security Groups across multi-account AWS environments.
+An interactive dashboard for reviewing AWS Security Groups across multi-account environments. Collects data from 15 resource types via [Steampipe](https://steampipe.io) and generates a self-contained HTML dashboard with [vis.js](https://visjs.org) network graph visualization.
 
 ## Security
 
@@ -110,7 +110,7 @@ python3 extract_and_visualize_v2.py --verbose
 
 | Flag | Description |
 |------|-------------|
-| `--regions` | Space-separated list of AWS regions to query (default: all regions) |
+| `--regions` | Space-separated list of AWS regions to query (default: `$AWS_DEFAULT_REGION` or `us-east-1`) |
 | `--skip-config` | Skip Steampipe aggregator config generation |
 | `--output`, `-o` | Output HTML file path (default: `sg_interactive_graph_v2.html`) |
 | `--template` | Path to the HTML template file |
@@ -118,9 +118,9 @@ python3 extract_and_visualize_v2.py --verbose
 
 The script automatically:
 1. Detects all AWS profiles from `~/.aws/credentials`
-2. Configures the Steampipe Aggregator and runs parallel queries
-3. Collects EC2, RDS, Lambda, ECS, ElastiCache, VPC Endpoint, and Security Group data
-4. Detects Security Group vulnerabilities (open port scan)
+2. Configures the Steampipe Aggregator and runs 3-wave parallel queries
+3. Collects 15 resource types: EC2, RDS, ALB/NLB, Lambda, ECS, ElastiCache, VPC Endpoints, Redshift, OpenSearch, DocumentDB, Neptune, MemoryDB, EKS, EFS, and ENIs
+4. Runs security analysis (ingress + egress vulnerabilities, default SG audit, permissive CIDR detection, cross-SG transitive exposure)
 5. Injects data into `sg_dashboard_template.html`
 6. Writes `sg_interactive_graph_v2.html`
 
@@ -143,26 +143,34 @@ python3 -m pytest tests/ -v
 
 ## Features
 
-### Multi-account filtering
-- **Account filter:** per-account resource view with color coding
-- **VPC filter:** when an account is selected, only that account's VPCs appear
-- **Type filter:** filter by resource type (EC2, RDS, Lambda, ECS, SG, etc.)
+### Supported resource types (15)
+
+EC2, RDS, ALB/NLB, Lambda, ECS (Fargate), ElastiCache (clusters + replication groups), VPC Endpoints, Redshift, OpenSearch, DocumentDB, Neptune, MemoryDB, EKS, EFS, ENIs (as safety net for unused SG detection)
 
 ### Security analysis
-- **Vulnerable SG detection:** auto-identifies security groups with sensitive ports open to 0.0.0.0/0 (SSH, RDP, MySQL, PostgreSQL, Redis, MongoDB, and 10 more)
-- **Unused SG identification:** flags security groups not attached to any resource
-- **XLSX export:** download vulnerable SG and unused SG lists as spreadsheets
+
+- **Ingress vulnerability detection:** sensitive ports open to `0.0.0.0/0` or `::/0` (SSH, RDP, MySQL, PostgreSQL, Redis, MongoDB, and 10 more)
+- **Egress vulnerability detection:** same analysis on outbound rules
+- **Default SG audit (CIS 5.4):** flags default security groups that have any non-default rules
+- **Overly permissive private CIDRs:** detects `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` with all-traffic or all-ports access
+- **Cross-SG transitive exposure:** if SG-A allows ingress from SG-B, and SG-B is open to `0.0.0.0/0`, SG-A is flagged as indirectly exposed
+- **Unused SG identification:** flags security groups not attached to any resource or ENI
+- **XLSX export:** download vulnerable and unused SG lists as spreadsheets
+
+### Multi-account filtering
+
+- **Account filter:** per-account resource view with color coding
+- **VPC filter:** independent VPC selection within selected accounts
+- **Type filter:** filter by any of the 15 resource types
 
 ### Interactive visualization
-- **Node drag:** reposition nodes with the mouse
-- **Highlight:** connected nodes and edges are emphasized on hover
-- **Detail panel:** click a node to see its full SG rule set
-- **SG-to-SG references:** toggle visibility of security group cross-references
 
-### Visualization conventions
-- **Node size:** scales with connection count
-- **Color:** distinct color per VPC
-- **Edges:** solid lines for resource-to-SG connections, dashed lines for SG-to-SG references
+- **Detail panel:** click any node to see SG rules (inbound/outbound), description, tags, vulnerabilities, transitive exposure warnings, public IP, and publicly accessible flags
+- **Public accessibility indicators:** EC2 public IP and RDS `publicly_accessible` shown with warning badges
+- **Tags display:** resource and SG tags displayed in detail panel
+- **Keyboard shortcuts:** `/` to search, `Escape` to close panel, `f` to fit view
+- **SG-to-SG references:** cross-reference edges between security groups
+- **Node sizing:** scales with connection count, color-coded per VPC
 
 ## How it works
 
@@ -171,16 +179,23 @@ extract_and_visualize_v2.py
       ↓
 Configure Steampipe Aggregator (all AWS profiles)
       ↓
-Parallel queries
-      ├─ EC2, RDS, Lambda, ECS, ElastiCache
-      ├─ VPC Endpoint, Network Interface
-      ├─ Security Group + Rules
+Wave 1 — parallel queries (independent)
+      ├─ EC2, RDS, ALB/NLB, Lambda, VPC Endpoints
+      ├─ Security Groups + Rules, ElastiCache shared data
       └─ VPC metadata
       ↓
-Data processing
-      ├─ Build node/edge data
-      ├─ Vulnerability detection (open port scan)
-      └─ VPC/Account metadata
+Wave 2 — parallel queries (depend on Wave 1)
+      ├─ Redshift, OpenSearch, EKS, EFS, ENIs
+      └─ ElastiCache clusters + replication groups
+      ↓
+Wave 3 — parallel queries (depend on SG data)
+      └─ ECS, DocumentDB, Neptune, MemoryDB
+      ↓
+Security analysis
+      ├─ Ingress + egress vulnerability scan
+      ├─ Default SG audit (CIS 5.4)
+      ├─ Permissive private CIDR detection
+      └─ Cross-SG transitive exposure
       ↓
 Inject data between DATA SECTION markers in sg_dashboard_template.html
       ↓
