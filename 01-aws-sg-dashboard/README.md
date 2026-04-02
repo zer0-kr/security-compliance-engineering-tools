@@ -7,7 +7,8 @@
 
 An interactive dashboard that visualizes AWS Security Group relationships across multi-account environments. Collects data from **15 AWS resource types** via [Steampipe](https://steampipe.io), performs automated security analysis, and generates a self-contained HTML dashboard.
 
-> **Your data stays on your machine.** This tool runs entirely on your local workstation. All AWS API calls are made directly from your machine via Steampipe, and the generated HTML dashboard is saved as a local file. **No data is sent to any external server, cloud service, or third party.** The tool has no network calls other than the AWS API queries you initiate. You can verify this by reviewing the [source code](extract_and_visualize_v2.py) — it is a single Python script with no external dependencies beyond the standard library.
+> [!IMPORTANT]
+> **Your data never leaves your machine.** This tool runs 100% locally. All AWS API calls go directly from your workstation to AWS via Steampipe — no intermediate servers, no telemetry, no third-party data transmission. The generated dashboard is a local HTML file. You can verify this in the [source code](extract_and_visualize_v2.py): a single Python script using only the standard library.
 
 ![Demo](demo.gif)
 
