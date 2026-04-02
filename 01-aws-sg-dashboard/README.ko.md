@@ -7,6 +7,8 @@
 
 멀티 어카운트 AWS 환경의 Security Group 관계를 시각화하는 인터랙티브 대시보드입니다. [Steampipe](https://steampipe.io)를 통해 **15개 AWS 리소스 타입**의 데이터를 수집하고, 자동 보안 분석을 수행한 후, 단일 HTML 파일로 대시보드를 생성합니다.
 
+![Demo](demo.gif)
+
 ## 아키텍처
 
 ```

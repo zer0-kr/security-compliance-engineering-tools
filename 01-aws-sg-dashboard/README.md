@@ -7,7 +7,7 @@
 
 An interactive dashboard that visualizes AWS Security Group relationships across multi-account environments. Collects data from **15 AWS resource types** via [Steampipe](https://steampipe.io), performs automated security analysis, and generates a self-contained HTML dashboard.
 
-![Dashboard Architecture](https://img.shields.io/badge/vis.js-Network_Graph-orange)
+![Demo](demo.gif)
 
 ## Architecture
 
