@@ -10,7 +10,7 @@
 > [!IMPORTANT]
 > **데이터는 절대 외부로 전송되지 않습니다.** 이 도구는 100% 로컬에서 실행됩니다. 모든 AWS API 호출은 Steampipe를 통해 사용자의 워크스테이션에서 AWS로 직접 전송됩니다 — 중간 서버 없음, 텔레메트리 없음, 제3자 데이터 전송 없음. 생성된 대시보드는 로컬 HTML 파일입니다. [소스 코드](extract_and_visualize_v2.py)에서 직접 확인할 수 있습니다: 표준 라이브러리만 사용하는 단일 Python 스크립트입니다.
 
-![Demo](demo.gif)
+![Demo](https://github.com/zer0-kr/security-compliance-engineering-tools/releases/download/assets/demo.gif)
 
 ## 아키텍처
 

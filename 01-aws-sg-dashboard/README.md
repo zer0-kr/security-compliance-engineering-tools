@@ -10,7 +10,7 @@ An interactive dashboard that visualizes AWS Security Group relationships across
 > [!IMPORTANT]
 > **Your data never leaves your machine.** This tool runs 100% locally. All AWS API calls go directly from your workstation to AWS via Steampipe — no intermediate servers, no telemetry, no third-party data transmission. The generated dashboard is a local HTML file. You can verify this in the [source code](extract_and_visualize_v2.py): a single Python script using only the standard library.
 
-![Demo](demo.gif)
+![Demo](https://github.com/zer0-kr/security-compliance-engineering-tools/releases/download/assets/demo.gif)
 
 ## Architecture
 
