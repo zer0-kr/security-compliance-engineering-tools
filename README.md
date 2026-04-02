@@ -1,6 +1,6 @@
 # Security & Compliance Engineering Tools
 
-A collection of open-source tools for AWS security review and compliance automation.
+A collection of open-source tools for security compliance engineering and automation.
 
 ## Tools
 
