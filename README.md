@@ -1,4 +1,4 @@
-# Security & Compliance Engineering Tools
+# Security Compliance Engineering Tools
 
 A collection of open-source tools for security compliance engineering and automation.
 
