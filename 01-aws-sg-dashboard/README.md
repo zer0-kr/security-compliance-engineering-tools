@@ -18,6 +18,7 @@ An interactive dashboard that visualizes AWS Security Group relationships across
 ┌─────────────────────────────────────────────────────────────┐
 │                    Your Workstation                          │
 │                                                             │
+│  ~/.aws/config,                                             │
 │  ~/.aws/credentials ──→ extract_and_visualize_v2.py         │
 │    [profile prod]         │                                 │
 │    [profile dev]          ├── 1. Configure Steampipe        │
@@ -51,7 +52,7 @@ An interactive dashboard that visualizes AWS Security Group relationships across
 
 ### Data Flow
 
-1. **Profile Discovery** — Reads `~/.aws/credentials` to find all AWS profiles
+1. **Profile Discovery** — Reads `~/.aws/credentials` and `~/.aws/config` to find all AWS profiles, then applies `--profiles` / `--exclude-profiles`
 2. **Authentication Check** — Validates each profile via `aws sts get-caller-identity`
 3. **Steampipe Aggregator Setup** — Generates a single aggregator config combining all profiles (backs up existing config)
 4. **Parallel Data Collection** — 18 queries in 3 waves:
@@ -99,7 +100,9 @@ aws configure --profile my-profile
 aws sts get-caller-identity --profile my-profile
 ```
 
-The script auto-detects **all profiles** in `~/.aws/credentials`. Each profile becomes a separate connection in the Steampipe aggregator.
+The script auto-detects **all profiles** in `~/.aws/credentials` and `~/.aws/config` (`[default]` and `[profile name]` sections; `[sso-session ...]` sections are ignored), so SSO setups without a credentials file work too. `$AWS_SHARED_CREDENTIALS_FILE` and `$AWS_CONFIG_FILE` are honored. Profiles found in both files are listed once. Each profile becomes a separate connection in the Steampipe aggregator. Use `--profiles` or `--exclude-profiles` to narrow the set.
+
+> **SSO setups:** every profile becomes its own Steampipe connection, so several role profiles for the same account (e.g. `prod-admin` and `prod-readonly`) query that account more than once. A config `[default]` section that holds only a `region` is also discovered and shows up as an auth failure line. Use `--profiles` or `--exclude-profiles` to keep one profile per account.
 
 ### 4. Required IAM Permissions
 
@@ -183,6 +186,12 @@ python3 -m http.server 8080
 # Specific regions
 python3 extract_and_visualize_v2.py --regions ap-northeast-2 us-west-2
 
+# Only these profiles
+python3 extract_and_visualize_v2.py --profiles prod staging
+
+# All profiles except these
+python3 extract_and_visualize_v2.py --regions ap-northeast-2 --exclude-profiles foo bar
+
 # Skip Steampipe config regeneration (faster on subsequent runs)
 python3 extract_and_visualize_v2.py --skip-config
 
@@ -198,6 +207,8 @@ python3 extract_and_visualize_v2.py -v
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--regions` | `$AWS_DEFAULT_REGION` or `us-east-1` | AWS regions to query (space-separated) |
+| `--profiles` | all discovered | Only use these AWS profiles (space-separated). The run aborts if any of them is not found |
+| `--exclude-profiles` | none | Skip these AWS profiles (space-separated). Unknown names are logged as a warning |
 | `--skip-config` | `false` | Skip Steampipe aggregator config generation |
 | `--output`, `-o` | `sg_interactive_graph_v2.html` | Output HTML file path |
 | `--template` | `sg_dashboard_template.html` | Path to the HTML template file |
@@ -221,7 +232,7 @@ python3 extract_and_visualize_v2.py -v
 | MemoryDB | `aws_memorydb_cluster` | cluster name, VPC, SGs |
 | EKS | `aws_eks_cluster` | cluster name, VPC, SGs |
 | EFS | `aws_efs_mount_target` | file system ID, VPC, SGs |
-| ENI | `aws_ec2_network_interface` | SG associations (safety net for unused SG detection) |
+| ENI | `aws_ec2_network_interface` | SG associations of every ENI (ground truth for unused SG detection; if this query fails, the run aborts) |
 
 ## Security Analysis
 
@@ -232,7 +243,7 @@ python3 extract_and_visualize_v2.py -v
 | **Default SG with rules (CIS 5.4)** | Medium | Flags default security groups that have any non-default rules |
 | **Overly permissive private CIDRs** | Medium | Detects `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` with all-traffic or all-ports access |
 | **Cross-SG transitive exposure** | Warning | If SG-A allows ingress from SG-B, and SG-B allows `0.0.0.0/0`, then SG-A is flagged as indirectly exposed |
-| **Unused security groups** | Info | SGs not attached to any resource or ENI |
+| **Unused security groups** | Info | SGs not attached to any resource or ENI. References from other SGs' rules do not count as usage; they are shown as "Referenced by" because the referencing rule must be removed before the SG can be deleted |
 
 ## Dashboard Features
 
@@ -249,11 +260,14 @@ python3 extract_and_visualize_v2.py -v
 - Transitive exposure warnings
 - EC2 public IP, RDS publicly_accessible badges
 - Tags display
+- SG region, and "Referenced by" (SGs whose rules reference this SG)
 - Connected SGs / attached resources navigation
 
 ### Export
 - **PNG** — export graph as image
 - **XLSX** — download unused and vulnerable SG lists as spreadsheets
+  - Unused SGs: Account, Profile, Region, SG ID, SG Name, Description, VPC ID, Ingress Rules, Egress Rules, Referenced By
+  - Vulnerable SGs: Account, Profile, Region, SG ID, SG Name, VPC ID, Port, Service, Source, Severity
 
 ### Keyboard Shortcuts
 | Key | Action |
@@ -269,9 +283,12 @@ python3 extract_and_visualize_v2.py -v
 ├── extract_and_visualize_v2.py  # Data collection + HTML generation (Python)
 ├── sg_dashboard_template.html   # Dashboard UI template (vis.js, no data)
 ├── tests/                       # Unit tests (pytest)
+│   ├── test_collect_multi_account.py
 │   ├── test_vulnerability_detection.py
 │   ├── test_partition.py
-│   └── test_template_injection.py
+│   ├── test_profile_discovery.py
+│   ├── test_template_injection.py
+│   └── test_unused_sg_detection.py
 ├── pyproject.toml               # Project metadata
 ├── LICENSE                      # MIT License
 ├── CHANGELOG.md                 # Version history
@@ -301,6 +318,15 @@ steampipe plugin install aws
 aws sts get-caller-identity --profile <your-profile>
 # If SSO: aws sso login --profile <your-profile>
 steampipe service restart
+```
+
+### "No AWS profiles found"
+Check that `~/.aws/config` or `~/.aws/credentials` (or the files named by `$AWS_CONFIG_FILE` / `$AWS_SHARED_CREDENTIALS_FILE`) define at least one `[default]` or `[profile name]` section.
+
+### "Network interface query failed"
+The run aborts on purpose: without ENI data, every SG attached only through an ENI would be reported as unused. Check `ec2:DescribeNetworkInterfaces` permission and run:
+```bash
+steampipe query "SELECT count(*) FROM aws_ec2_network_interface"
 ```
 
 ### Empty graph / no data

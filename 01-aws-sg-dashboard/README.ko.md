@@ -18,6 +18,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                    로컬 워크스테이션                           │
 │                                                             │
+│  ~/.aws/config,                                             │
 │  ~/.aws/credentials ──→ extract_and_visualize_v2.py         │
 │    [profile prod]         │                                 │
 │    [profile dev]          ├── 1. Steampipe Aggregator 설정   │
@@ -50,7 +51,7 @@
 
 ### 데이터 흐름
 
-1. **프로필 탐색** — `~/.aws/credentials`에서 모든 AWS 프로필 자동 감지
+1. **프로필 탐색** — `~/.aws/credentials`와 `~/.aws/config`에서 모든 AWS 프로필 자동 감지 후 `--profiles` / `--exclude-profiles` 적용
 2. **인증 확인** — `aws sts get-caller-identity`로 각 프로필 검증
 3. **Steampipe Aggregator 설정** — 모든 프로필을 단일 aggregator로 통합 (기존 설정 자동 백업)
 4. **병렬 데이터 수집** — 3단계 병렬 쿼리:
@@ -95,7 +96,9 @@ aws configure --profile my-profile
 aws sts get-caller-identity --profile my-profile
 ```
 
-스크립트가 `~/.aws/credentials`의 **모든 프로필**을 자동 감지합니다.
+스크립트가 `~/.aws/credentials`와 `~/.aws/config`의 **모든 프로필**(`[default]`, `[profile 이름]` 섹션)을 자동 감지합니다. `[sso-session ...]` 섹션은 무시하므로 credentials 파일이 없는 SSO 환경에서도 동작합니다. `$AWS_SHARED_CREDENTIALS_FILE`, `$AWS_CONFIG_FILE` 환경 변수를 따르며, 두 파일에 모두 있는 프로필은 한 번만 사용합니다. `--profiles` 또는 `--exclude-profiles`로 대상을 좁힐 수 있습니다.
+
+> **SSO 환경:** 프로필마다 Steampipe connection이 하나씩 생기므로, 같은 계정에 역할 프로필이 여러 개 있으면(예: `prod-admin`, `prod-readonly`) 그 계정을 중복 조회합니다. config의 `[default]`에 `region`만 있어도 프로필로 감지되어 인증 실패 줄이 출력됩니다. `--profiles` 또는 `--exclude-profiles`로 계정당 프로필 하나만 남기세요.
 
 ### 4. 필요한 IAM 권한
 
@@ -179,6 +182,12 @@ python3 -m http.server 8080
 # 특정 리전 지정
 python3 extract_and_visualize_v2.py --regions ap-northeast-2 us-west-2
 
+# 지정한 프로필만
+python3 extract_and_visualize_v2.py --profiles prod staging
+
+# 지정한 프로필 제외
+python3 extract_and_visualize_v2.py --regions ap-northeast-2 --exclude-profiles foo bar
+
 # Steampipe 설정 재생성 건너뛰기 (2회차부터 빠름)
 python3 extract_and_visualize_v2.py --skip-config
 
@@ -194,6 +203,8 @@ python3 extract_and_visualize_v2.py -v
 | 플래그 | 기본값 | 설명 |
 |--------|--------|------|
 | `--regions` | `$AWS_DEFAULT_REGION` 또는 `us-east-1` | 쿼리할 AWS 리전 (공백 구분) |
+| `--profiles` | 감지된 전체 | 이 AWS 프로필만 사용 (공백 구분). 하나라도 없으면 실행 중단 |
+| `--exclude-profiles` | 없음 | 이 AWS 프로필 제외 (공백 구분). 없는 이름은 경고로 출력 |
 | `--skip-config` | `false` | Steampipe aggregator 설정 생성 건너뛰기 |
 | `--output`, `-o` | `sg_interactive_graph_v2.html` | 출력 HTML 파일 경로 |
 | `--template` | `sg_dashboard_template.html` | HTML 템플릿 파일 경로 |
@@ -217,7 +228,7 @@ python3 extract_and_visualize_v2.py -v
 | MemoryDB | `aws_memorydb_cluster` | 클러스터명, VPC, SG |
 | EKS | `aws_eks_cluster` | 클러스터명, VPC, SG |
 | EFS | `aws_efs_mount_target` | 파일 시스템 ID, VPC, SG |
-| ENI | `aws_ec2_network_interface` | SG 연결 정보 (미사용 SG 탐지 안전망) |
+| ENI | `aws_ec2_network_interface` | 모든 ENI의 SG 연결 정보 (미사용 SG 판정 기준, 이 쿼리가 실패하면 실행 중단) |
 
 ## 보안 분석
 
@@ -228,7 +239,7 @@ python3 extract_and_visualize_v2.py -v
 | **Default SG에 규칙 존재 (CIS 5.4)** | Medium | AWS 기본 SG에 비기본 규칙이 있으면 플래그 |
 | **Private CIDR 과다 허용** | Medium | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`에 전 트래픽/전 포트 허용 탐지 |
 | **Cross-SG 간접 노출** | Warning | SG-A가 SG-B에서 ingress 허용 + SG-B가 `0.0.0.0/0` 허용 → SG-A 간접 노출 |
-| **미사용 Security Group** | Info | 어떤 리소스/ENI에도 연결되지 않은 SG |
+| **미사용 Security Group** | Info | 어떤 리소스/ENI에도 연결되지 않은 SG. 다른 SG 규칙에서 참조되는 것은 사용으로 보지 않으며, 참조 규칙을 지워야 SG를 삭제할 수 있으므로 "Referenced by"로 표시 |
 
 ## 대시보드 기능
 
@@ -245,11 +256,14 @@ python3 extract_and_visualize_v2.py -v
 - 간접 노출 경고
 - EC2 Public IP, RDS publicly_accessible 배지
 - 태그 표시
+- SG 리전, "Referenced by"(이 SG를 규칙에서 참조하는 SG 목록)
 - 연결된 SG / 리소스 탐색
 
 ### 내보내기
 - **PNG** — 그래프 이미지 저장
 - **XLSX** — 미사용/취약 SG 목록 스프레드시트 다운로드
+  - 미사용 SG: Account, Profile, Region, SG ID, SG Name, Description, VPC ID, Ingress Rules, Egress Rules, Referenced By
+  - 취약 SG: Account, Profile, Region, SG ID, SG Name, VPC ID, Port, Service, Source, Severity
 
 ### 키보드 단축키
 | 키 | 동작 |
@@ -279,6 +293,15 @@ steampipe plugin install aws
 aws sts get-caller-identity --profile <프로필명>
 # SSO 사용 시: aws sso login --profile <프로필명>
 steampipe service restart
+```
+
+### "No AWS profiles found"
+`~/.aws/config` 또는 `~/.aws/credentials`(`$AWS_CONFIG_FILE` / `$AWS_SHARED_CREDENTIALS_FILE`로 지정한 파일)에 `[default]`나 `[profile 이름]` 섹션이 하나 이상 있는지 확인하세요.
+
+### "Network interface query failed"
+의도된 중단입니다. ENI 데이터 없이 진행하면 ENI로만 연결된 SG가 모두 미사용으로 잘못 표시됩니다. `ec2:DescribeNetworkInterfaces` 권한을 확인하고 아래 쿼리를 실행해 보세요.
+```bash
+steampipe query "SELECT count(*) FROM aws_ec2_network_interface"
 ```
 
 ### 빈 그래프 / 데이터 없음

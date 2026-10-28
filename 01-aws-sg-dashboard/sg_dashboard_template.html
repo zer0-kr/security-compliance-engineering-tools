@@ -1024,6 +1024,7 @@ if (n.lb_type) lines.push('LB Type: ' + esc(n.lb_type));
                 lines.push('<span style="color:#dc2626">⚠ ' + vCount + ' vulnerable rules</span>');
             }
             if (n.group === 'sg' && n.is_unused) lines.push('<span style="color:#dc2626">Unused</span>');
+            if (n.group === 'sg' && n.referenced_by && n.referenced_by.length > 0) lines.push('Referenced by: ' + esc(n.referenced_by.join(', ')));
             return lines.join('<br>');
         }
 
@@ -1463,11 +1464,14 @@ if (n.lb_type) lines.push('LB Type: ' + esc(n.lb_type));
                 '<div class="meta-row"><span class="meta-label">SG ID</span>' + esc(n.id) + '</div>';
             if (n.description) html += '<div class="meta-row"><span class="meta-label">Description</span>' + esc(n.description) + '</div>';
             if (n.account_name) html += '<div class="meta-row"><span class="meta-label">Account</span>' + esc(n.account_name) + '</div>';
+            if (n.region) html += '<div class="meta-row"><span class="meta-label">Region</span>' + esc(n.region) + '</div>';
             html += '<div class="meta-row"><span class="meta-label">VPC</span>' + getVpcName(n.vpc_id) + '</div>' +
                 '<div class="meta-row"><span class="meta-label">Status</span>' +
                 (n.is_vulnerable ? '<span class="badge badge-danger">⚠ Vulnerable</span> ' : '') +
                 (n.is_unused ? '<span class="badge badge-danger">Unused</span>' : '<span class="badge badge-success">In Use</span>') +
                 '</div>';
+            // References from other SGs don't count as usage, but they block deletion until removed
+            if (n.referenced_by && n.referenced_by.length > 0) html += '<div class="meta-row"><span class="meta-label">Referenced by</span>' + esc(n.referenced_by.join(', ')) + '</div>';
             if (n.tags && Object.keys(n.tags).length > 0) {
                 html += '<div class="meta-row"><span class="meta-label">Tags</span><div style="display:inline">';
                 Object.keys(n.tags).forEach(function(k) {
@@ -1767,11 +1771,14 @@ if (n.lb_type) lines.push('LB Type: ' + esc(n.lb_type));
                 return {
                     'Account': n.account_name || '',
                     'Profile': n.profile_name || '',
+                    'Region': n.region || '',
                     'SG ID': sgId,
                     'SG Name': n.label || '',
+                    'Description': n.description || '',
                     'VPC ID': vpcId,
                     'Ingress Rules': rules.ingress ? rules.ingress.length : 0,
-                    'Egress Rules': rules.egress ? rules.egress.length : 0
+                    'Egress Rules': rules.egress ? rules.egress.length : 0,
+                    'Referenced By': (n.referenced_by || []).join(', ')
                 };
             });
             rows.sort(function(a, b) {
@@ -1779,8 +1786,8 @@ if (n.lb_type) lines.push('LB Type: ' + esc(n.lb_type));
             });
             var ws = XLSX.utils.json_to_sheet(rows);
             ws['!cols'] = [
-                { wch: 22 }, { wch: 12 }, { wch: 24 },
-                { wch: 50 }, { wch: 24 }, { wch: 14 }, { wch: 14 }
+                { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 24 },
+                { wch: 50 }, { wch: 50 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 40 }
             ];
             var wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Unused SGs');
@@ -1803,6 +1810,7 @@ if (n.lb_type) lines.push('LB Type: ' + esc(n.lb_type));
                     rows.push({
                         'Account': n.account_name || '',
                         'Profile': n.profile_name || '',
+                        'Region': n.region || '',
                         'SG ID': sgId,
                         'SG Name': n.label || '',
                         'VPC ID': vpcId,
@@ -1820,7 +1828,7 @@ if (n.lb_type) lines.push('LB Type: ' + esc(n.lb_type));
             });
             var ws = XLSX.utils.json_to_sheet(rows);
             ws['!cols'] = [
-                { wch: 22 }, { wch: 12 }, { wch: 24 }, { wch: 50 },
+                { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 24 }, { wch: 50 },
                 { wch: 24 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 10 }
             ];
             var wb = XLSX.utils.book_new();

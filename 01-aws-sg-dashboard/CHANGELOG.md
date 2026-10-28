@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Unused SG detection:** an SG is now reported as unused only when no resource or ENI is attached to it. Previously, an SG-to-SG rule reference marked both the referencing and the referenced SG as in use, so orphaned SGs that referenced each other were hidden
+- **SSO profile discovery:** profiles are read from `~/.aws/config` (`[default]`, `[profile name]`) as well as `~/.aws/credentials`, so SSO setups without a credentials file no longer fail with "No AWS profiles found". `[sso-session ...]` sections are ignored, and `$AWS_CONFIG_FILE` / `$AWS_SHARED_CREDENTIALS_FILE` are honored
+- **ENI coverage:** SG associations are collected from every ENI. ENIs in unlisted VPCs, NAT gateway / VPC endpoint / GWLB endpoint ENIs, and ENIs of known EC2 instances were skipped before, which could report in-use SGs (e.g. on secondary ENIs) as unused
+- **Shared SGs across accounts:** ENI usage is no longer split by account. An SG owned by one account and used by an ENI in another (VPC sharing) is now reported as in use
+- **Profile names with dashes:** Steampipe connection names are now derived from profile names with characters other than lowercase letters, digits and `_` replaced by `_` (`lbox-system` → `aws_lbox_system`). Steampipe rejects connection names containing dashes or whitespace, so `steampipe service start` failed for any such profile. Two profiles that map to the same connection name abort the run
+- **`--skip-config` with profile filters:** accounts returned by an existing aggregator config but not selected (filtered out by `--profiles` / `--exclude-profiles`, or failed auth) are now dropped instead of collected
+
+### Added
+
+- `--profiles` and `--exclude-profiles` flags to choose which AWS profiles to collect from. Requesting a profile that does not exist aborts the run; excluding an unknown profile logs a warning
+- `referenced_by` on SG nodes: SGs whose rules reference the SG. Shown as "Referenced by" in the SG tooltip and detail panel, and as a column in the unused SG XLSX export, because the reference must be removed before the SG can be deleted. References from SGs in other collected accounts are included
+- SG region: collected from Steampipe, shown in the SG detail panel, and added as a `Region` column to both XLSX exports
+- `Description` column in the unused SG XLSX export
+
+### Changed
+
+- A failed ENI query now aborts the run instead of continuing with no ENI data, since unused SG detection would be unreliable without it
+
 ## [3.0.0] - 2026-03-31
 
 This release prepares the project for open-source distribution with a full CLI interface, security hardening, and a comprehensive test suite.

@@ -67,6 +67,10 @@ def parse_args(argv=None):
     )
     parser.add_argument('--regions', nargs='+', default=DEFAULT_REGIONS,
         help='AWS regions to query (default: $AWS_DEFAULT_REGION or us-east-1)')
+    parser.add_argument('--profiles', nargs='+',
+        help='Only use these AWS profiles (default: all discovered profiles)')
+    parser.add_argument('--exclude-profiles', nargs='+',
+        help='Skip these AWS profiles')
     parser.add_argument('--skip-config', action='store_true',
         help='Skip Steampipe aggregator config generation (use existing config)')
     parser.add_argument('--template', default=DEFAULT_TEMPLATE,
@@ -225,26 +229,72 @@ RG_QUERY = """
 """
 
 def get_aws_profiles():
-    """Discover all AWS profiles from ~/.aws/credentials"""
-    credentials_path = os.path.expanduser('~/.aws/credentials')
-
-    if not os.path.exists(credentials_path):
-        logger.warning(f"⚠️  ~/.aws/credentials file not found")
-        return []
+    """Discover AWS profiles from the shared credentials and config files"""
+    credentials_path = os.path.expanduser(
+        os.environ.get('AWS_SHARED_CREDENTIALS_FILE', '~/.aws/credentials'))
+    config_path = os.path.expanduser(
+        os.environ.get('AWS_CONFIG_FILE', '~/.aws/config'))
 
     profiles = []
-    with open(credentials_path, 'r') as f:
-        for line in f:
-            match = re.match(r'^\[([^\]]+)\]', line.strip())
-            if match:
-                profile_name = match.group(1)
-                # 'default' profile is used without explicit name
-                if profile_name == 'default':
-                    profiles.append('default')
+    # SSO setups often have no credentials file at all; their profiles live
+    # only in the config file as [profile name] sections.
+    for path, is_config in ((credentials_path, False), (config_path, True)):
+        if not os.path.exists(path):
+            logger.debug(f"   {path} not found")
+            continue
+        with open(path, 'r') as f:
+            for line in f:
+                match = re.match(r'^\[([^\]]+)\]', line.strip())
+                if not match:
+                    continue
+                section = match.group(1).strip()
+                if is_config:
+                    # Config file names profiles "[profile x]"; other sections
+                    # such as "[sso-session x]" or "[services x]" are not profiles.
+                    if section == 'default':
+                        profile_name = 'default'
+                    elif section.startswith('profile '):
+                        profile_name = section[len('profile '):].strip()
+                    else:
+                        continue
                 else:
+                    profile_name = section
+                if profile_name and profile_name not in profiles:
                     profiles.append(profile_name)
 
     return profiles
+
+
+def filter_profiles(profiles, include=None, exclude=None):
+    """Apply --profiles / --exclude-profiles. Returns (selected, missing).
+    missing lists explicitly requested profiles that were not discovered."""
+    missing = []
+    if include:
+        missing = [p for p in include if p not in profiles]
+        profiles = [p for p in profiles if p in include]
+    if exclude:
+        profiles = [p for p in profiles if p not in exclude]
+    return profiles, missing
+
+
+def steampipe_connection_name(profile):
+    """Steampipe connection name for a profile.
+    Connection names become Postgres schemas, which Steampipe rejects if they
+    contain dashes or whitespace (common in profile names like 'prod-admin')."""
+    return 'aws_' + re.sub(r'[^a-z0-9_]', '_', profile.lower())
+
+
+def steampipe_connection_map(profiles):
+    """Map connection name → profile; abort if two profiles map to the same name."""
+    names = {}
+    for profile in profiles:
+        name = steampipe_connection_name(profile)
+        if name in names:
+            logger.error(f"❌ Profiles '{names[name]}' and '{profile}' both map to "
+                         f"Steampipe connection '{name}'. Use --exclude-profiles to drop one.")
+            sys.exit(1)
+        names[name] = profile
+    return names
 
 def setup_aggregator_config(profiles, regions=None):
     regions = regions or DEFAULT_REGIONS
@@ -256,8 +306,7 @@ def setup_aggregator_config(profiles, regions=None):
         logger.warning(f"   ⚠️  Existing config backed up to: {backup_path}")
 
     config_parts = []
-    for profile in profiles:
-        conn_name = f"aws_{profile}"
+    for conn_name, profile in steampipe_connection_map(profiles).items():
         config_parts.append(f'''connection "{conn_name}" {{
   plugin  = "aws"
   profile = "{profile}"
@@ -391,13 +440,16 @@ def get_all_account_identities(auth_ok_profiles):
         """
         account_result = run_steampipe_query(account_query)
 
+        conn_to_profile = steampipe_connection_map(auth_ok_profiles)
         accounts = {}
         for row in account_result.get('rows', []):
             account_id = row['account_id']
             connection_name = row.get('connection_name', '')
 
-            # Extract profile from connection_name: 'aws_myprofile' → 'myprofile'
-            profile_name = connection_name.replace('aws_', '', 1) if connection_name.startswith('aws_') else connection_name
+            # Connections not generated by this script (--skip-config) fall back to
+            # stripping the prefix: 'aws_myprofile' → 'myprofile'
+            profile_name = conn_to_profile.get(connection_name) or (
+                connection_name.replace('aws_', '', 1) if connection_name.startswith('aws_') else connection_name)
 
             account_aliases = row.get('account_aliases')
             if account_aliases and len(account_aliases) > 0:
@@ -415,12 +467,12 @@ def get_all_account_identities(auth_ok_profiles):
             }
             logger.info(f"   ✓ Account verified: {account_name} ({account_id}) [connection: {connection_name}]")
 
-        # Detect partial failures
-        if len(accounts) < len(auth_ok_profiles):
-            found_profiles = {a['profile_name'] for a in accounts.values()}
-            missing = [p for p in auth_ok_profiles if p not in found_profiles]
-            if missing:
-                logger.warning(f"   ⚠️  Missing profiles: {', '.join(missing)}")
+        # Detect partial failures. Not gated on a count comparison: with
+        # --skip-config the aggregator may return extra, unselected accounts.
+        found_profiles = {a['profile_name'] for a in accounts.values()}
+        missing = [p for p in auth_ok_profiles if p not in found_profiles]
+        if missing:
+            logger.warning(f"   ⚠️  Missing profiles: {', '.join(missing)}")
 
         return accounts
 
@@ -709,7 +761,7 @@ def _run_query_with_connection_fallback(query, auth_ok_profiles):
         logger.warning(f"   ⚠️  Aggregator access denied, retrying per-connection...")
         all_rows = []
         for profile in auth_ok_profiles:
-            conn_name = f"aws_{profile}"
+            conn_name = steampipe_connection_name(profile)
             try:
                 result = subprocess.run(
                     ['steampipe', 'query', query,
@@ -847,64 +899,37 @@ def get_elasticache_replication_groups(all_vpc_info, clusters_result, subnet_gro
 
     return replication_group_info, replication_group_sg_map
 
-def get_network_interfaces(all_vpc_info, known_ec2_ids=None):
-    """Fetch network interface SG info via aggregator (safety net)"""
+def get_network_interfaces():
+    """Fetch SG associations of every ENI via aggregator: {eni_id: [sg_id]}.
+    ENIs are the ground truth for SG attachment, so no ENI is skipped here:
+    dropping any (e.g. secondary ENIs of known EC2 instances, whose SGs may
+    differ from the instance-level list) would mark in-use SGs as unused.
+    ENIs are not rendered as nodes, so keeping all of them has no visual cost."""
     query = """
     SELECT
         network_interface_id,
-        vpc_id,
-        account_id,
-        groups,
-        description,
-        attached_instance_id,
-        interface_type
+        groups
     FROM aws_ec2_network_interface
     WHERE groups IS NOT NULL
     """
     result = run_steampipe_query(query)
 
-    eni_info = {}
     eni_sg_map = {}
 
-    try:
-        for row in result.get('rows', []):
-            eni_id = row.get('network_interface_id')
-            vpc_id = row.get('vpc_id')
-            account_id = row.get('account_id')
-            groups = row.get('groups', [])
-            description = row.get('description', '')
-            attached_instance_id = row.get('attached_instance_id')
-            interface_type = row.get('interface_type', '')
-            vpc_info = all_vpc_info.get(account_id, {})
+    for row in result.get('rows', []):
+        eni_id = row.get('network_interface_id')
+        if not eni_id:
+            continue
 
-            if not eni_id or not vpc_id:
-                continue
+        eni_sg_map[eni_id] = []
 
-            if vpc_id not in vpc_info:
-                continue
+        for group in (row.get('groups') or []):
+            if isinstance(group, dict):
+                sg_id = group.get('GroupId')
+                if sg_id:
+                    eni_sg_map[eni_id].append(sg_id)
 
-            if interface_type in ['nat_gateway', 'vpc_endpoint', 'gateway_load_balancer_endpoint']:
-                continue
-
-            if description and ('NAT Gateway' in description or 'VPC Endpoint' in description):
-                continue
-
-            if attached_instance_id and known_ec2_ids and attached_instance_id in known_ec2_ids:
-                continue
-
-            eni_info[eni_id] = {'account_id': account_id}
-            eni_sg_map[eni_id] = []
-
-            for group in groups:
-                if isinstance(group, dict):
-                    sg_id = group.get('GroupId')
-                    if sg_id:
-                        eni_sg_map[eni_id].append(sg_id)
-
-    except Exception as e:
-        logger.warning(f"   ⚠️  Network interface query error: {e}")
-
-    return eni_info, eni_sg_map
+    return eni_sg_map
 
 def _resolve_vpc_from_sg(sg_id_list, sg_info):
     """Determine resource vpc_id via SG reverse lookup"""
@@ -1265,7 +1290,7 @@ def get_efs_mount_targets(all_vpc_info):
 def get_security_groups_and_rules(all_vpc_info):
     """Fetch SG info and rules in single query via aggregator"""
     query = """
-        SELECT group_id, group_name, vpc_id, account_id,
+        SELECT group_id, group_name, vpc_id, account_id, region,
                description, tags,
                ip_permissions, ip_permissions_egress
         FROM aws_vpc_security_group
@@ -1286,6 +1311,7 @@ def get_security_groups_and_rules(all_vpc_info):
             'group_name': row['group_name'],
             'vpc_id': vpc_id,
             'account_id': account_id,
+            'region': row.get('region', ''),
             'color': vpc_info.get(vpc_id, {}).get('color', '#999999'),
             'description': row.get('description', ''),
             'tags': row.get('tags') or {},
@@ -1355,8 +1381,22 @@ def enrich_sg_rules_with_account(sg_rules, account_metadata):
 
     return enriched_sg_rules
 
-def generate_nodes_and_edges(resources, sg_info, sg_rules, extra_used_sgs=None):
-    """Generate node and edge data (generic loop based on ResourceData)"""
+def build_referenced_by_map(sg_rules, sg_info):
+    """{sg_id: sorted ids of other SGs whose rules reference it}.
+    A reference does not count as usage, but it blocks deleting the SG
+    (DependencyViolation) until the referencing rule is removed."""
+    referenced_by = defaultdict(set)
+    for sg_id, rules in sg_rules.items():
+        for rule in (rules.get('ingress') or []) + (rules.get('egress') or []):
+            for user_id_group_pair in (rule.get('UserIdGroupPairs') or []):
+                ref_sg_id = user_id_group_pair.get('GroupId')
+                if ref_sg_id and ref_sg_id in sg_info and ref_sg_id != sg_id:
+                    referenced_by[ref_sg_id].add(sg_id)
+    return {sg_id: sorted(refs) for sg_id, refs in referenced_by.items()}
+
+def generate_nodes_and_edges(resources, sg_info, sg_rules, extra_used_sgs=None, referenced_by_map=None):
+    """Generate node and edge data (generic loop based on ResourceData).
+    referenced_by_map: precomputed over all accounts; built locally if None."""
     all_nodes = []
     all_edges = []
     used_sgs = set(extra_used_sgs) if extra_used_sgs else set()
@@ -1398,6 +1438,7 @@ def generate_nodes_and_edges(resources, sg_info, sg_rules, extra_used_sgs=None):
             'label': info['name'],
             'group': 'sg',
             'vpc_id': info['vpc_id'],
+            'region': info.get('region', ''),
             'is_unused': sg_id not in used_sgs,
             'is_vulnerable': len(sg_vulns) > 0,
             'vulnerabilities': sg_vulns,
@@ -1407,6 +1448,10 @@ def generate_nodes_and_edges(resources, sg_info, sg_rules, extra_used_sgs=None):
         })
 
 
+    # SG-to-SG references are drawn as edges but do not count as usage: an SG
+    # attached to nothing is unused even if a rule references it.
+    if referenced_by_map is None:
+        referenced_by_map = build_referenced_by_map(sg_rules, sg_info)
     for sg_id, rules in sg_rules.items():
 
         for rule in rules.get('ingress', []):
@@ -1419,8 +1464,6 @@ def generate_nodes_and_edges(resources, sg_info, sg_rules, extra_used_sgs=None):
                         'label': 'ingress',
                         'dashes': True
                     })
-                    used_sgs.add(ref_sg_id)
-                    used_sgs.add(sg_id)
 
 
         for rule in rules.get('egress', []):
@@ -1433,13 +1476,11 @@ def generate_nodes_and_edges(resources, sg_info, sg_rules, extra_used_sgs=None):
                         'label': 'egress',
                         'dashes': True
                     })
-                    used_sgs.add(ref_sg_id)
-                    used_sgs.add(sg_id)
 
 
     for node in all_nodes:
         if node.get('group') == 'sg':
-            node['is_unused'] = node['id'] not in used_sgs
+            node['referenced_by'] = referenced_by_map.get(node['id'], [])
 
     return all_nodes, all_edges
 
@@ -1477,10 +1518,26 @@ def collect_multi_account_data(args=None):
 
     if not profiles:
         logger.warning("⚠️  No AWS profiles found")
-        logger.info("   Please check ~/.aws/credentials")
+        logger.info("   Please check ~/.aws/config and ~/.aws/credentials "
+                    "(or $AWS_CONFIG_FILE / $AWS_SHARED_CREDENTIALS_FILE)")
         sys.exit(1)
 
     logger.info(f"📋 Discovered AWS profiles: {', '.join(profiles)}\n")
+
+    include = getattr(args, 'profiles', None)
+    exclude = getattr(args, 'exclude_profiles', None)
+    if include or exclude:
+        unknown_excludes = [p for p in (exclude or []) if p not in profiles]
+        if unknown_excludes:
+            logger.warning(f"   ⚠️  --exclude-profiles not found (ignored): {', '.join(unknown_excludes)}")
+        profiles, missing = filter_profiles(profiles, include=include, exclude=exclude)
+        if missing:
+            logger.error(f"❌ Requested profiles not found: {', '.join(missing)}")
+            sys.exit(1)
+        if not profiles:
+            logger.error("❌ No profiles left after --profiles / --exclude-profiles filtering")
+            sys.exit(1)
+        logger.info(f"📋 Selected AWS profiles: {', '.join(profiles)}\n")
 
 
     auth_ok_profiles = check_aws_cli_auth(profiles, region=regions[0])
@@ -1504,6 +1561,13 @@ def collect_multi_account_data(args=None):
 
 
     accounts = get_all_account_identities(auth_ok_profiles)
+    # With --skip-config the existing aggregator may still contain connections
+    # for profiles that were filtered out or failed auth.
+    dropped = sorted(m['profile_name'] for m in accounts.values()
+                     if m['profile_name'] not in auth_ok_profiles)
+    if dropped:
+        logger.warning(f"   ⚠️  Ignoring aggregator connections not selected: {', '.join(dropped)}")
+        accounts = {a: m for a, m in accounts.items() if m['profile_name'] in auth_ok_profiles}
     if not accounts:
         logger.warning(f"⚠️  Data collection failed for all profiles")
         sys.exit(1)
@@ -1639,13 +1703,18 @@ def collect_multi_account_data(args=None):
     logger.info(f"   ✓ EFS: {len(efs_info)}")
 
 
-    known_ec2_ids = set(ec2_info.keys())
     try:
-        eni_info, eni_sg_map = get_network_interfaces(all_vpc_info, known_ec2_ids=known_ec2_ids)
+        eni_sg_map = get_network_interfaces()
     except Exception as e:
-        logger.warning(f"   ⚠️  Network interface query failed (skipping): {e}")
-        eni_info, eni_sg_map = {}, {}
-    logger.info(f"   ✓ ENI (safety net): {len(eni_sg_map)}")
+        # ENIs are the ground truth for SG attachment. Continuing without them
+        # would report every SG attached only via an ENI as unused.
+        logger.error(f"❌ FATAL: Network interface query failed: {e}")
+        logger.error("   Unused SG detection would be unreliable without ENI data. Aborting.")
+        sys.exit(1)
+    logger.info(f"   ✓ ENI: {len(eni_sg_map)}")
+    # SG IDs are globally unique and an ENI may use an SG owned by another
+    # account (VPC sharing), so ENI usage is not partitioned by account.
+    eni_used_sgs = {sg_id for sg_list in eni_sg_map.values() for sg_id in sg_list}
 
 
     ec2_by_acct = _partition_by_account(ec2_info, ec2_sg_map)
@@ -1664,8 +1733,9 @@ def collect_multi_account_data(args=None):
 
     eks_by_acct = _partition_by_account(eks_info, eks_sg_map)
     efs_by_acct = _partition_by_account(efs_info, efs_sg_map)
-    eni_by_acct = _partition_by_account(eni_info, eni_sg_map) if eni_info else {}
     sg_by_acct = _partition_sg_rules(sg_info, sg_rules)
+    # Built before partitioning so references from other accounts are included
+    referenced_by_map = build_referenced_by_map(sg_rules, sg_info)
 
 
     all_data = {
@@ -1695,25 +1765,9 @@ def collect_multi_account_data(args=None):
         acct_memorydb, acct_memorydb_sg = memorydb_by_acct.get(account_id, ({}, {}))
         acct_eks, acct_eks_sg = eks_by_acct.get(account_id, ({}, {}))
         acct_efs, acct_efs_sg = efs_by_acct.get(account_id, ({}, {}))
-        acct_eni_info, acct_eni_sg = eni_by_acct.get(account_id, ({}, {}))
         acct_sg_info, acct_sg_rules = sg_by_acct.get(account_id, ({}, {}))
         acct_vpc_info = all_vpc_info.get(account_id, {})
 
-
-        if not acct_eni_info and eni_sg_map:
-            acct_eni_sg_fallback = {}
-            for eni_id, sg_list in eni_sg_map.items():
-                for sg_id in sg_list:
-                    if sg_id in acct_sg_info:
-                        acct_eni_sg_fallback[eni_id] = sg_list
-                        break
-            if acct_eni_sg_fallback:
-                acct_eni_sg = acct_eni_sg_fallback
-
-
-        eni_used_sgs = set()
-        for sg_list in acct_eni_sg.values():
-            eni_used_sgs.update(sg_list)
 
         resources = [
             ResourceData('ec2', acct_ec2, acct_ec2_sg),
@@ -1735,7 +1789,8 @@ def collect_multi_account_data(args=None):
 
         nodes, edges = generate_nodes_and_edges(
             resources, acct_sg_info, acct_sg_rules,
-            extra_used_sgs=eni_used_sgs
+            extra_used_sgs=eni_used_sgs,
+            referenced_by_map=referenced_by_map
         )
 
         enriched_nodes = enrich_nodes_with_account(nodes, account_meta)
